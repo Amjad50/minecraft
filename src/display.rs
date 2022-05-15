@@ -7,13 +7,41 @@ use vulkano::{
     },
     image::{ImageUsage, SwapchainImage},
     instance::{Instance, InstanceCreateInfo},
-    swapchain::{Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError},
+    swapchain::{AcquireError, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError},
+    sync::{self, FlushError, GpuFuture},
 };
 use vulkano_win::VkSurfaceBuild;
 use winit::{
     event_loop::EventLoop,
     window::{Window, WindowBuilder},
 };
+
+#[derive(Debug)]
+pub(crate) enum FrameError {
+    AcquireOutOfDate,
+    MultipleBeginFrame,
+    EmptyDisplay,
+}
+
+impl std::error::Error for FrameError {}
+
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameError::AcquireOutOfDate => write!(
+                f,
+                "Acquire out of date error, try beginning the frame again"
+            ),
+            FrameError::MultipleBeginFrame => writeln!(
+                f,
+                "Tried to `begin_frame` multiple times before ending the previous frame"
+            ),
+            FrameError::EmptyDisplay => {
+                write!(f, "The display is empty (maybe minimized in windows)")
+            }
+        }
+    }
+}
 
 /// Houses all the setup and surface rendering for vulkan
 pub(crate) struct Display {
@@ -22,6 +50,10 @@ pub(crate) struct Display {
     surface: Arc<Surface<Window>>,
     swapchain: Arc<Swapchain<Window>>,
     swapchain_images: Vec<Arc<SwapchainImage<Window>>>,
+
+    current_image_num: usize,
+    recreate_swapchain: bool,
+    previous_frame_end: Option<Box<dyn GpuFuture>>,
 }
 
 impl Display {
@@ -113,39 +145,105 @@ impl Display {
             .unwrap()
         };
 
+        let previous_frame_end = Some(sync::now(device.clone()).boxed());
+
         Self {
             device,
             queue,
             surface,
             swapchain,
             swapchain_images,
+
+            current_image_num: 0,
+            recreate_swapchain: false,
+            previous_frame_end,
         }
     }
 
-    pub fn device(&self) -> Arc<Device> {
-        self.device.clone()
+    pub fn resize(&mut self) {
+        self.recreate_swapchain = true;
     }
 
     pub fn queue(&self) -> Arc<Queue> {
         self.queue.clone()
     }
 
-    pub fn swapchain(&self) -> Arc<Swapchain<Window>> {
-        self.swapchain.clone()
+    pub fn current_image(&self) -> Arc<SwapchainImage<Window>> {
+        self.swapchain_images[self.current_image_num].clone()
     }
 
-    pub fn swapchain_image(&self, num: usize) -> Option<Arc<SwapchainImage<Window>>> {
-        self.swapchain_images.get(num).map(|img| img.clone())
+    pub fn begin_frame(&mut self) -> Result<Box<dyn GpuFuture>, FrameError> {
+        // Do not draw frame when screen dimensions are zero.
+        // On Windows, this can occur from minimizing the application.
+        if self.is_empty() {
+            return Err(FrameError::EmptyDisplay);
+        }
+
+        let mut last_future = self
+            .previous_frame_end
+            .take()
+            .ok_or(FrameError::MultipleBeginFrame)?;
+        last_future.cleanup_finished();
+
+        if self.recreate_swapchain {
+            self.recreate_swapchains();
+            self.recreate_swapchain = false;
+        }
+
+        let (image_num, suboptimal, acquire_future) =
+            match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
+                Ok(r) => r,
+                Err(AcquireError::OutOfDate) => {
+                    self.recreate_swapchain = true;
+                    return Err(FrameError::AcquireOutOfDate);
+                }
+                Err(e) => panic!("Failed to acquire next image: {:?}", e),
+            };
+
+        if suboptimal {
+            self.recreate_swapchain = true;
+        }
+
+        self.current_image_num = image_num;
+
+        Ok(last_future.join(acquire_future).boxed())
+    }
+
+    pub fn end_frame<F>(&mut self, future: F)
+    where
+        F: GpuFuture + 'static,
+    {
+        let future = future
+            .then_swapchain_present(
+                self.queue.clone(),
+                self.swapchain.clone(),
+                self.current_image_num,
+            )
+            .then_signal_fence_and_flush();
+
+        match future {
+            Ok(future) => {
+                self.previous_frame_end = Some(future.boxed());
+            }
+            Err(FlushError::OutOfDate) => {
+                self.recreate_swapchain = true;
+                self.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+            }
+            Err(e) => {
+                println!("Failed to flush future: {:?}", e);
+                self.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
+            }
+        }
     }
 }
 
 impl Display {
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         let dimensions = self.surface.window().inner_size();
         dimensions.width == 0 || dimensions.height == 0
     }
 
-    pub fn recreate_swapchains(&mut self) {
+    fn recreate_swapchains(&mut self) {
         let dimensions = self.surface.window().inner_size();
         let (new_swapchain, new_images) = match self.swapchain.recreate(SwapchainCreateInfo {
             image_extent: dimensions.into(),
