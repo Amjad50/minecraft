@@ -5,6 +5,7 @@ use vulkano::{
         physical::{PhysicalDevice, PhysicalDeviceType},
         Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
     },
+    format::Format,
     image::{ImageUsage, SwapchainImage},
     instance::{Instance, InstanceCreateInfo},
     swapchain::{AcquireError, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError},
@@ -170,6 +171,10 @@ impl Display {
 
     pub fn current_image(&self) -> Arc<SwapchainImage<Window>> {
         self.swapchain_images[self.current_image_num].clone()
+    }
+
+    pub fn swapchain_image_format(&self) -> Format {
+        self.swapchain.image_format()
     }
 
     pub fn begin_frame(&mut self) -> Result<Box<dyn GpuFuture>, FrameError> {

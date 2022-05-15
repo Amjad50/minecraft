@@ -21,7 +21,7 @@ fn main() {
             ..ImageUsage::none()
         },
     );
-    let mut engine = Engine::new(display.queue());
+    let mut engine = Engine::new(display.queue(), display.swapchain_image_format());
 
     let mut t = Instant::now();
     event_loop.run(move |event, _, control_flow: &mut ControlFlow| {
