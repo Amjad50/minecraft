@@ -1,6 +1,7 @@
-use std::{f32::consts::PI, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use bytemuck::{Pod, Zeroable};
+use cgmath::Deg;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess},
     command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents},
@@ -20,7 +21,11 @@ use vulkano::{
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
     sync::GpuFuture,
 };
-use winit::event::{ElementState, Event, MouseButton, WindowEvent};
+use winit::event::{
+    ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
+};
+
+use crate::camera::Camera;
 
 mod vs {
     vulkano_shaders::shader! {
@@ -34,28 +39,6 @@ mod fs {
         ty: "fragment",
         path: "src/shaders/fragment.glsl"
     }
-}
-
-// helper function to create a perspective projection transformation matrix
-fn get_perspective_transformation(
-    vertical_fov_deg: f32,
-    aspect_ratio: f32,
-    near: f32,
-    far: f32,
-) -> [[f32; 4]; 4] {
-    // convert to radians
-    let fov_rad = vertical_fov_deg * 2.0 * PI / 360.0;
-    // compute the focal length
-    let focal_length = 1. / (fov_rad / 2.0).tan();
-
-    // projection matrix, this uses reversed depth (near is 1, far is 0)
-    // this matrix is transposed to work for the shader
-    [
-        [focal_length / aspect_ratio, 0.0, 0.0, 0.0],
-        [0.0, -focal_length, 0.0, 0.0],
-        [0.0, 0.0, near / (far - near), 1.0],
-        [0.0, 0.0, (far * near) / (far - near), 0.0],
-    ]
 }
 
 #[repr(C)]
@@ -165,10 +148,13 @@ pub(crate) struct Engine {
 
     // current mouse position for placing a block
     mouse_position: [f32; 2],
+    holding_cursor: bool,
     // viewport saved size for placing a block
     viewport_size: [f32; 2],
     // collecting of blocks
     world: World,
+
+    camera: Camera,
 }
 
 impl Engine {
@@ -242,8 +228,17 @@ impl Engine {
             b_inc: 0.015,
 
             mouse_position: [0., 0.],
+            holding_cursor: false,
             viewport_size: [0., 0.],
             world: World::default(),
+            camera: Camera::new(
+                45.,
+                0.0,
+                0.1,
+                100.,
+                [0., 0., 0.].into(),
+                [0., 1., 0.].into(),
+            ),
         }
     }
 
@@ -253,19 +248,74 @@ impl Engine {
                 event:
                     WindowEvent::MouseInput {
                         button: MouseButton::Left,
-                        state: ElementState::Released,
+                        state: ElementState::Pressed,
                         ..
                     },
                 ..
             } => self.place_block(),
+            Event::WindowEvent {
+                event:
+                    WindowEvent::MouseInput {
+                        button: MouseButton::Right,
+                        state,
+                        ..
+                    },
+                ..
+            } => match state {
+                ElementState::Pressed => {
+                    self.holding_cursor = true;
+                }
+                ElementState::Released => {
+                    self.holding_cursor = false;
+                }
+            },
             Event::WindowEvent {
                 event: WindowEvent::CursorMoved { position, .. },
                 ..
             } => {
                 // unfortunately, we can't get the position inside a button
                 // click event, so we have to keep track of it.
-                self.mouse_position = position.into();
+                let mouse_position: [f32; 2] = position.into();
+                let diff = [
+                    mouse_position[0] - self.mouse_position[0],
+                    mouse_position[1] - self.mouse_position[1],
+                ];
+                self.mouse_position = mouse_position;
+
+                if self.holding_cursor {
+                    self.camera
+                        .rotate_camera(Deg(-diff[0] * 0.1).into(), Deg(diff[1] * 0.10).into());
+                }
             }
+            Event::WindowEvent {
+                event:
+                    WindowEvent::MouseWheel {
+                        delta: MouseScrollDelta::LineDelta(_, y),
+                        ..
+                    },
+                ..
+            } => {
+                self.camera.zoom(y as f32 * 1.);
+            }
+            Event::WindowEvent {
+                event:
+                    WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(keycode),
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } => match keycode {
+                VirtualKeyCode::W => self.camera.move_camera([0.0, 0.0, -0.2].into()),
+                VirtualKeyCode::S => self.camera.move_camera([0.0, 0.0, 0.2].into()),
+                VirtualKeyCode::A => self.camera.move_camera([-0.2, 0.0, 0.0].into()),
+                VirtualKeyCode::D => self.camera.move_camera([0.2, 0.0, 0.0].into()),
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -373,13 +423,11 @@ impl Engine {
             )
             .unwrap();
 
+            self.camera
+                .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
             let push_constants = vs::ty::PushConstantData {
-                transformation: get_perspective_transformation(
-                    45.,
-                    self.viewport_size[0] / self.viewport_size[1],
-                    0.1,
-                    100.,
-                ),
+                perspective: self.camera.reversed_depth_perspective().into(),
+                view: self.camera.view().into(),
             };
 
             builder

@@ -8,7 +8,8 @@ layout(location = 3) in vec3 rotation;
 layout(location = 0) out vec4 v_color;
 
 layout(push_constant) uniform PushConstantData {
-    mat4 transformation;
+    mat4 perspective;
+    mat4 view;
 } pc;
 
 void main() {
@@ -32,7 +33,7 @@ void main() {
         center_pos, 1
     );
 
-    gl_Position = pc.transformation * rotation_and_translation * vec4(origin_position, 1);
+    gl_Position = pc.perspective * pc.view * rotation_and_translation * vec4(origin_position, 1);
 
     v_color = color;
 }
