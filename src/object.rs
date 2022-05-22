@@ -1,66 +1,18 @@
 use bytemuck::{Pod, Zeroable};
 use vulkano::impl_vertex;
 
-pub trait Object {
-    fn to_mesh(&self, mesh: &mut Mesh);
-}
-
-pub struct Square {
-    pub center_pos: [f32; 3],
-    pub color: [f32; 4],
-    pub rotation: [f32; 3],
-}
-
-impl Object for Square {
-    fn to_mesh(&self, mesh: &mut Mesh) {
-        let [x, y, z] = self.center_pos;
-        let top_left = [x - 0.5, y - 0.5, z];
-        let top_right = [x + 0.5, y - 0.5, z];
-        let bottom_left = [x - 0.5, y + 0.5, z];
-        let bottom_right = [x + 0.5, y + 0.5, z];
-        let vertices = [
-            Vertex {
-                center_pos: self.center_pos,
-                pos: top_left,
-                color: self.color,
-                rotation: self.rotation,
-            },
-            Vertex {
-                center_pos: self.center_pos,
-                pos: top_right,
-                color: self.color,
-                rotation: self.rotation,
-            },
-            Vertex {
-                center_pos: self.center_pos,
-                pos: bottom_left,
-                color: self.color,
-                rotation: self.rotation,
-            },
-            Vertex {
-                center_pos: self.center_pos,
-                pos: bottom_right,
-                color: self.color,
-                rotation: self.rotation,
-            },
-        ];
-
-        let indices = [0, 1, 2, 1, 2, 3];
-
-        mesh.append_vertices(&vertices, &indices);
-    }
-}
+pub mod cube;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Default)]
 pub struct Vertex {
-    pub center_pos: [f32; 3],
     pub pos: [f32; 3],
     pub color: [f32; 4],
     pub rotation: [f32; 3],
+    pub translation: [f32; 3],
 }
 
-impl_vertex!(Vertex, center_pos, pos, color, rotation);
+impl_vertex!(Vertex, pos, color, rotation, translation);
 
 #[derive(Default)]
 pub struct Mesh {
@@ -97,5 +49,54 @@ impl Mesh {
 
     pub fn append(&mut self, obj: &dyn Object) {
         obj.to_mesh(self);
+    }
+}
+
+pub trait Object {
+    fn to_mesh(&self, mesh: &mut Mesh);
+}
+
+pub struct Square {
+    pub center: [f32; 3],
+    pub color: [f32; 4],
+    pub rotation: [f32; 3],
+}
+
+impl Object for Square {
+    fn to_mesh(&self, mesh: &mut Mesh) {
+        let top_left = [-0.5, -0.5, 0.];
+        let top_right = [0.5, -0.5, 0.];
+        let bottom_left = [-0.5, 0.5, 0.];
+        let bottom_right = [0.5, 0.5, 0.];
+        let vertices = [
+            Vertex {
+                pos: top_left,
+                color: self.color,
+                rotation: self.rotation,
+                translation: self.center,
+            },
+            Vertex {
+                pos: top_right,
+                color: self.color,
+                rotation: self.rotation,
+                translation: self.center,
+            },
+            Vertex {
+                pos: bottom_left,
+                color: self.color,
+                rotation: self.rotation,
+                translation: self.center,
+            },
+            Vertex {
+                pos: bottom_right,
+                color: self.color,
+                rotation: self.rotation,
+                translation: self.center,
+            },
+        ];
+
+        let indices = [0, 1, 2, 1, 2, 3];
+
+        mesh.append_vertices(&vertices, &indices);
     }
 }

@@ -20,12 +20,13 @@ use vulkano::{
     sync::GpuFuture,
 };
 use winit::event::{
-    ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
+    ElementState, Event, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta,
+    VirtualKeyCode, WindowEvent,
 };
 
 use crate::{
     camera::Camera,
-    object::{Mesh, Square, Vertex},
+    object::{cube::Cube, Mesh, Square, Vertex},
 };
 
 mod vs {
@@ -44,20 +45,28 @@ mod fs {
 
 #[derive(Default)]
 struct World {
-    blocks: Vec<Square>,
+    cubes: Vec<Cube>,
+    squares: Vec<Square>,
 }
 
 impl World {
-    pub fn push_block(&mut self, block: Square) {
-        self.blocks.push(block);
+    pub fn push_cube(&mut self, block: Cube) {
+        self.cubes.push(block);
+    }
+
+    pub fn push_square(&mut self, block: Square) {
+        self.squares.push(block);
     }
 }
 
 impl World {
     fn to_mesh(&self) -> Mesh {
-        let mut mesh = Mesh::with_capacity(self.blocks.len() * 6);
+        let mut mesh = Mesh::with_capacity(self.cubes.len() * 6);
 
-        for block in &self.blocks {
+        for block in &self.cubes {
+            mesh.append(block);
+        }
+        for block in &self.squares {
             mesh.append(block);
         }
         mesh
@@ -83,6 +92,7 @@ pub(crate) struct Engine {
 
     // current mouse position for placing a block
     mouse_position: [f32; 2],
+    should_place_square: bool,
     holding_cursor: bool,
     // viewport saved size for placing a block
     viewport_size: [f32; 2],
@@ -163,6 +173,7 @@ impl Engine {
             b_inc: 0.015,
 
             mouse_position: [0., 0.],
+            should_place_square: false,
             holding_cursor: false,
             viewport_size: [0., 0.],
             world: World::default(),
@@ -172,6 +183,12 @@ impl Engine {
 
     pub fn handle_events(&mut self, _event: Event<()>) {
         match _event {
+            Event::WindowEvent {
+                event: WindowEvent::ModifiersChanged(state),
+                ..
+            } => {
+                self.should_place_square = state.intersects(ModifiersState::SHIFT);
+            }
             Event::WindowEvent {
                 event:
                     WindowEvent::MouseInput {
@@ -275,7 +292,12 @@ impl Engine {
             self.b = 0.0;
         }
 
-        for block in &mut self.world.blocks {
+        for block in &mut self.world.cubes {
+            block.rotation[0] += 0.01 * 60. * delta.as_secs_f32();
+            block.rotation[1] += 0.03 * 60. * delta.as_secs_f32();
+            block.rotation[2] += 0.05 * 60. * delta.as_secs_f32();
+        }
+        for block in &mut self.world.squares {
             block.rotation[0] += 0.01 * 60. * delta.as_secs_f32();
             block.rotation[1] += 0.03 * 60. * delta.as_secs_f32();
             block.rotation[2] += 0.05 * 60. * delta.as_secs_f32();
@@ -411,12 +433,22 @@ impl Engine {
         // get z range from 5 to 70
         let z = (random % (70 - 5)) + 5;
 
-        let block = Square {
-            center_pos: [pos[0], pos[1], z as f32],
-            // use the current background color
-            color: [self.r, self.g, self.b, 1.0],
-            rotation: [0.0, 0.0, 0.0],
-        };
-        self.world.push_block(block);
+        if self.should_place_square {
+            let block = Square {
+                center: [pos[0], pos[1], z as f32].into(),
+                // use the current background color
+                color: [self.r, self.g, self.b, 1.0],
+                rotation: [0.0, 0.0, 0.0],
+            };
+            self.world.push_square(block);
+        } else {
+            let block = Cube {
+                center: [pos[0], pos[1], z as f32].into(),
+                // use the current background color
+                color: [self.r, self.g, self.b, 1.0],
+                rotation: [0.0, 0.0, 0.0],
+            };
+            self.world.push_cube(block);
+        }
     }
 }
