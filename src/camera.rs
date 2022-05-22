@@ -1,27 +1,11 @@
 use std::f32::consts::PI;
 
-use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{Angle, Deg, Euler, Matrix3, Matrix4, Point3, Rad, SquareMatrix, Vector3, Zero};
 
 const LOW_PITCH: Rad<f32> = Rad(-89.0 * PI / 180.0);
 const HIGH_PITCH: Rad<f32> = Rad(89.0 * PI / 180.0);
 
-fn create_camera_axes(yaw: Rad<f32>, pitch: Rad<f32>, world_up: Vector3<f32>) -> Matrix3<f32> {
-    let forward_axes = Vector3::new(
-        yaw.cos() * pitch.cos(),
-        pitch.sin(),
-        yaw.sin() * pitch.cos(),
-    )
-    .normalize();
-
-    let right_axes = forward_axes.cross(world_up).normalize();
-    let up_axes = right_axes.cross(forward_axes).normalize();
-
-    Matrix3::from_cols(right_axes, up_axes, forward_axes)
-}
-
 pub(crate) struct Camera {
-    world_up: Vector3<f32>,
-
     position: Point3<f32>,
 
     yaw: Rad<f32>,
@@ -42,23 +26,14 @@ pub(crate) struct Camera {
 }
 
 impl Camera {
-    pub fn new(
-        fov: f32,
-        aspect: f32,
-        near: f32,
-        far: f32,
-        position: Point3<f32>,
-        world_up: Vector3<f32>,
-    ) -> Camera {
+    pub fn new(fov: f32, aspect: f32, near: f32, far: f32, position: Point3<f32>) -> Camera {
         // starting angles
-        let yaw = Deg(-90.0).into();
+        let yaw = Deg(0.0).into();
         let pitch = Deg(0.0).into();
 
-        let camera_axes = create_camera_axes(yaw, pitch, world_up);
+        let camera_axes = Euler::new(pitch, yaw, Rad::zero()).into();
 
         Camera {
-            world_up,
-
             position,
 
             yaw,
@@ -109,7 +84,7 @@ impl Camera {
 
     pub fn view(&mut self) -> cgmath::Matrix4<f32> {
         if self.view_dirty {
-            self.view = Matrix4::look_to_rh(self.position, self.camera_axes.z, self.camera_axes.y);
+            self.view = Matrix4::look_to_lh(self.position, self.camera_axes.z, self.camera_axes.y);
             self.view_dirty = false;
         }
         self.view
@@ -127,7 +102,7 @@ impl Camera {
             self.pitch = LOW_PITCH;
         }
 
-        self.camera_axes = create_camera_axes(self.yaw, self.pitch, self.world_up);
+        self.camera_axes = Euler::new(self.pitch, self.yaw, Rad::zero()).into();
 
         self.view_dirty = true;
     }

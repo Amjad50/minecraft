@@ -231,14 +231,7 @@ impl Engine {
             holding_cursor: false,
             viewport_size: [0., 0.],
             world: World::default(),
-            camera: Camera::new(
-                45.,
-                0.0,
-                0.1,
-                100.,
-                [0., 0., 0.].into(),
-                [0., 1., 0.].into(),
-            ),
+            camera: Camera::new(45., 0.0, 0.1, 100., [0., 0., 0.].into()),
         }
     }
 
@@ -284,7 +277,7 @@ impl Engine {
 
                 if self.holding_cursor {
                     self.camera
-                        .rotate_camera(Deg(-diff[0] * 0.1).into(), Deg(diff[1] * 0.10).into());
+                        .rotate_camera(Deg(diff[0] * 0.1).into(), Deg(diff[1] * 0.10).into());
                 }
             }
             Event::WindowEvent {
@@ -310,8 +303,8 @@ impl Engine {
                     },
                 ..
             } => match keycode {
-                VirtualKeyCode::W => self.camera.move_camera([0.0, 0.0, -0.2].into()),
-                VirtualKeyCode::S => self.camera.move_camera([0.0, 0.0, 0.2].into()),
+                VirtualKeyCode::W => self.camera.move_camera([0.0, 0.0, 0.2].into()),
+                VirtualKeyCode::S => self.camera.move_camera([0.0, 0.0, -0.2].into()),
                 VirtualKeyCode::A => self.camera.move_camera([-0.2, 0.0, 0.0].into()),
                 VirtualKeyCode::D => self.camera.move_camera([0.2, 0.0, 0.0].into()),
                 _ => {}
