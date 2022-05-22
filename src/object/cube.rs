@@ -12,52 +12,69 @@ impl Object for Cube {
     fn to_mesh(&self, mesh: &mut super::Mesh) {
         let translation = self.center.into();
 
+        // creates a vertex with normal
         macro_rules! create_vertex {
-            ($pos: expr) => {
+            ($pos: expr, $normal: expr) => {
                 Vertex {
                     pos: $pos,
                     color: self.color,
+                    normal: $normal,
                     rotation: self.rotation,
                     translation: translation,
+                }
+            };
+            (copy $vec: expr, $normal: expr) => {
+                Vertex {
+                    pos: $vec.pos,
+                    color: $vec.color,
+                    normal: $normal,
+                    rotation: $vec.rotation,
+                    translation: $vec.translation,
                 }
             };
         }
 
         // front
-        let front_top_left = create_vertex!([-0.5, 0.5, -0.5]);
-        let front_top_right = create_vertex!([0.5, 0.5, -0.5]);
-        let front_bottom_left = create_vertex!([-0.5, -0.5, -0.5]);
-        let front_bottom_right = create_vertex!([0.5, -0.5, -0.5]);
+        let normal = [0., 0., -1.];
+        let front_top_left = create_vertex!([-0.5, 0.5, -0.5], normal);
+        let front_top_right = create_vertex!([0.5, 0.5, -0.5], normal);
+        let front_bottom_left = create_vertex!([-0.5, -0.5, -0.5], normal);
+        let front_bottom_right = create_vertex!([0.5, -0.5, -0.5], normal);
 
         // back
-        let back_top_left = create_vertex!([-0.5, 0.5, 0.5]);
-        let back_top_right = create_vertex!([0.5, 0.5, 0.5]);
-        let back_bottom_left = create_vertex!([-0.5, -0.5, 0.5]);
-        let back_bottom_right = create_vertex!([0.5, -0.5, 0.5]);
+        let normal = [0., 0., 1.];
+        let back_top_left = create_vertex!([-0.5, 0.5, 0.5], normal);
+        let back_top_right = create_vertex!([0.5, 0.5, 0.5], normal);
+        let back_bottom_left = create_vertex!([-0.5, -0.5, 0.5], normal);
+        let back_bottom_right = create_vertex!([0.5, -0.5, 0.5], normal);
 
         // right
-        let right_top_left = front_top_right;
-        let right_top_right = back_top_right;
-        let right_bottom_left = front_bottom_right;
-        let right_bottom_right = back_bottom_right;
+        let normal = [1., 0., 0.];
+        let right_top_left = create_vertex!(copy front_top_right, normal);
+        let right_top_right = create_vertex!(copy back_top_right, normal);
+        let right_bottom_left = create_vertex!(copy front_bottom_right, normal);
+        let right_bottom_right = create_vertex!(copy back_bottom_right, normal);
 
         // left
-        let left_top_left = back_top_left;
-        let left_top_right = front_top_left;
-        let left_bottom_left = back_bottom_left;
-        let left_bottom_right = front_bottom_left;
+        let normal = [-1., 0., 0.];
+        let left_top_left = create_vertex!(copy back_top_left, normal);
+        let left_top_right = create_vertex!(copy front_top_left, normal);
+        let left_bottom_left = create_vertex!(copy back_bottom_left, normal);
+        let left_bottom_right = create_vertex!(copy front_bottom_left, normal);
 
         // up
-        let up_top_left = back_top_left;
-        let up_top_right = back_top_right;
-        let up_bottom_left = front_top_left;
-        let up_bottom_right = front_top_right;
+        let normal = [0., 1., 0.];
+        let up_top_left = create_vertex!(copy back_top_left, normal);
+        let up_top_right = create_vertex!(copy back_top_right, normal);
+        let up_bottom_left = create_vertex!(copy front_top_left, normal);
+        let up_bottom_right = create_vertex!(copy front_top_right, normal);
 
         // bottom
-        let bottom_top_left = back_bottom_left;
-        let bottom_top_right = back_bottom_right;
-        let bottom_bottom_left = front_bottom_left;
-        let bottom_bottom_right = front_bottom_right;
+        let normal = [0., -1., 0.];
+        let bottom_top_left = create_vertex!(copy back_bottom_left, normal);
+        let bottom_top_right = create_vertex!(copy back_bottom_right, normal);
+        let bottom_bottom_left = create_vertex!(copy front_bottom_left, normal);
+        let bottom_bottom_right = create_vertex!(copy front_bottom_right, normal);
 
         let vertices = [
             // front

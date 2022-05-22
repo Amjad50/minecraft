@@ -2,15 +2,18 @@
 
 layout(location = 0) in vec3 pos;
 layout(location = 1) in vec4 color;
-layout(location = 2) in vec3 rotation;
-layout(location = 3) in vec3 translation;
+layout(location = 2) in vec3 normal;
+layout(location = 3) in vec3 rotation;
+layout(location = 4) in vec3 translation;
 
 layout(location = 0) out vec4 v_color;
+layout(location = 1) out vec3 v_normal;
 
 layout(push_constant) uniform PushConstantData {
     mat4 perspective;
     mat4 view;
 } pc;
+
 
 void main() {
     float c1 = cos(rotation.x);
@@ -21,14 +24,19 @@ void main() {
     float s3 = sin(rotation.z);
 
     // https://en.wikipedia.org/wiki/Euler_angles#Rotation_matrix
-    mat4 rotation_and_translation = mat4(
+    mat4 object_transform = mat4(
         c2 * c3, c1 * s3 + c3 * s1 * s2, s1 * s3 - c1 * c3 * s2, 0,
         -c2 * s3, c1 * c3 - s1 * s2 * s3, c3 * s1 + c1 * s2 * s3, 0,
         s2, -c2 * s1, c1 * c2, 0,
         translation, 1
     );
+    gl_Position = pc.perspective * pc.view * object_transform * vec4(pos, 1);
 
-    gl_Position = pc.perspective * pc.view * rotation_and_translation * vec4(pos, 1);
+    // this transformation only works if scaling is uniform 
+    // (scaling of x, y, z by the same value), currently, we don't scale so its ok
+    // to compute the value correctly we should use transpose(inverse(mat3(transformation)))
+    vec3 normal_world_space = normalize(mat3(object_transform) * normal);
 
     v_color = color;
+    v_normal = normal_world_space;
 }

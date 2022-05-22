@@ -438,6 +438,7 @@ impl Engine {
                 center: [pos[0], pos[1], z as f32].into(),
                 // use the current background color
                 color: [self.r, self.g, self.b, 1.0],
+                normal: [0.0, 0.0, -1.0].into(),
                 rotation: [0.0, 0.0, 0.0],
             };
             self.world.push_square(block);

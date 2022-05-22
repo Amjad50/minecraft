@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use cgmath::{Point3, Vector3};
 use vulkano::impl_vertex;
 
 pub mod cube;
@@ -8,11 +9,13 @@ pub mod cube;
 pub struct Vertex {
     pub pos: [f32; 3],
     pub color: [f32; 4],
+    pub normal: [f32; 3],
+
     pub rotation: [f32; 3],
     pub translation: [f32; 3],
 }
 
-impl_vertex!(Vertex, pos, color, rotation, translation);
+impl_vertex!(Vertex, pos, color, normal, rotation, translation);
 
 #[derive(Default)]
 pub struct Mesh {
@@ -57,13 +60,18 @@ pub trait Object {
 }
 
 pub struct Square {
-    pub center: [f32; 3],
+    pub normal: Vector3<f32>,
+    pub center: Point3<f32>,
     pub color: [f32; 4],
     pub rotation: [f32; 3],
 }
 
 impl Object for Square {
     fn to_mesh(&self, mesh: &mut Mesh) {
+        let translation = self.center.into();
+        let rotation = self.rotation;
+        let normal = self.normal.into();
+
         let top_left = [-0.5, -0.5, 0.];
         let top_right = [0.5, -0.5, 0.];
         let bottom_left = [-0.5, 0.5, 0.];
@@ -72,26 +80,30 @@ impl Object for Square {
             Vertex {
                 pos: top_left,
                 color: self.color,
-                rotation: self.rotation,
-                translation: self.center,
+                normal,
+                rotation,
+                translation,
             },
             Vertex {
                 pos: top_right,
                 color: self.color,
-                rotation: self.rotation,
-                translation: self.center,
+                normal,
+                rotation,
+                translation,
             },
             Vertex {
                 pos: bottom_left,
                 color: self.color,
-                rotation: self.rotation,
-                translation: self.center,
+                normal,
+                rotation,
+                translation,
             },
             Vertex {
                 pos: bottom_right,
                 color: self.color,
-                rotation: self.rotation,
-                translation: self.center,
+                normal,
+                rotation,
+                translation,
             },
         ];
 
