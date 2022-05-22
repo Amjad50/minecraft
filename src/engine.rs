@@ -2,8 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use cgmath::Deg;
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess},
+    buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
     command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents},
+    descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet},
     device::Queue,
     format::{ClearValue, Format},
     image::{view::ImageView, AttachmentImage, ImageAccess},
@@ -14,7 +15,7 @@ use vulkano::{
             vertex_input::BuffersDefinition,
             viewport::{Viewport, ViewportState},
         },
-        GraphicsPipeline, PartialStateMode, Pipeline, StateMode,
+        GraphicsPipeline, PartialStateMode, Pipeline, PipelineBindPoint, StateMode,
     },
     render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass},
     sync::GpuFuture,
@@ -32,7 +33,12 @@ use crate::{
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
-        path: "src/shaders/vertex.glsl"
+        path: "src/shaders/vertex.glsl",
+        types_meta: {
+            use bytemuck::{Pod, Zeroable};
+
+            #[derive(Clone, Copy, Zeroable, Pod)]
+        },
     }
 }
 
@@ -79,6 +85,8 @@ pub(crate) struct Engine {
 
     render_pass: Arc<RenderPass>,
     graphics_pipeline: Arc<GraphicsPipeline>,
+    uniform_buffer_pool: CpuBufferPool<vs::ty::UniformData>,
+    descriptor_set_pool: SingleLayoutDescSetPool,
 
     depth_buffer: Arc<ImageView<AttachmentImage>>,
 
@@ -153,6 +161,17 @@ impl Engine {
             .build(queue.device().clone())
             .unwrap();
 
+        let uniform_buffer_pool =
+            CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer());
+        let descriptor_set_pool = SingleLayoutDescSetPool::new(
+            graphics_pipeline
+                .layout()
+                .set_layouts()
+                .get(0)
+                .unwrap()
+                .clone(),
+        );
+
         let depth_buffer = ImageView::new_default(
             AttachmentImage::transient(queue.device().clone(), [1, 1], Format::D32_SFLOAT).unwrap(),
         )
@@ -162,6 +181,8 @@ impl Engine {
             queue,
             render_pass,
             graphics_pipeline,
+            uniform_buffer_pool,
+            descriptor_set_pool,
 
             depth_buffer,
 
@@ -375,10 +396,18 @@ impl Engine {
 
             self.camera
                 .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
-            let push_constants = vs::ty::PushConstantData {
-                perspective: self.camera.reversed_depth_perspective().into(),
-                view: self.camera.view().into(),
-            };
+
+            let uniform_subbuffer = self
+                .uniform_buffer_pool
+                .next(vs::ty::UniformData {
+                    perspective: self.camera.reversed_depth_perspective().into(),
+                    view: self.camera.view().into(),
+                })
+                .unwrap();
+            let descriptor_set = self
+                .descriptor_set_pool
+                .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
+                .unwrap();
 
             builder
                 .set_viewport(
@@ -389,7 +418,12 @@ impl Engine {
                         depth_range: 0.0..1.0,
                     }],
                 )
-                .push_constants(self.graphics_pipeline.layout().clone(), 0, push_constants)
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    self.graphics_pipeline.layout().clone(),
+                    0,
+                    descriptor_set,
+                )
                 .bind_index_buffer(index_buffer.clone())
                 .bind_vertex_buffers(0, vec![vertex_buffer])
                 .bind_pipeline_graphics(self.graphics_pipeline.clone())

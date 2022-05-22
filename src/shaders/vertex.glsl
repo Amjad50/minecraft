@@ -9,10 +9,10 @@ layout(location = 4) in vec3 translation;
 layout(location = 0) out vec4 v_color;
 layout(location = 1) out vec3 v_normal;
 
-layout(push_constant) uniform PushConstantData {
+layout(set = 0, binding = 0) uniform UniformData {
     mat4 perspective;
     mat4 view;
-} pc;
+} u;
 
 
 void main() {
@@ -30,7 +30,7 @@ void main() {
         s2, -c2 * s1, c1 * c2, 0,
         translation, 1
     );
-    gl_Position = pc.perspective * pc.view * object_transform * vec4(pos, 1);
+    gl_Position = u.perspective * u.view * object_transform * vec4(pos, 1);
 
     // this transformation only works if scaling is uniform 
     // (scaling of x, y, z by the same value), currently, we don't scale so its ok
