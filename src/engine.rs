@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use bytemuck::{Pod, Zeroable};
 use cgmath::Deg;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess},
@@ -8,7 +7,6 @@ use vulkano::{
     device::Queue,
     format::{ClearValue, Format},
     image::{view::ImageView, AttachmentImage, ImageAccess},
-    impl_vertex,
     pipeline::{
         graphics::{
             depth_stencil::{CompareOp, DepthState, DepthStencilState},
@@ -25,7 +23,10 @@ use winit::event::{
     ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
 };
 
-use crate::camera::Camera;
+use crate::{
+    camera::Camera,
+    object::{Mesh, Square, Vertex},
+};
 
 mod vs {
     vulkano_shaders::shader! {
@@ -41,91 +42,25 @@ mod fs {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Default)]
-struct Vertex {
-    center_pos: [f32; 3],
-    pos: [f32; 3],
-    color: [f32; 4],
-    rotation: [f32; 3],
-}
-
-impl_vertex!(Vertex, center_pos, pos, color, rotation);
-
-struct Mesh {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
-}
-
-impl Mesh {
-    fn is_empty(&self) -> bool {
-        self.indices.is_empty()
-    }
-}
-
-struct Block {
-    pub center_pos: [f32; 3],
-    pub color: [f32; 4],
-    pub rotation: [f32; 3],
-}
-
 #[derive(Default)]
 struct World {
-    blocks: Vec<Block>,
+    blocks: Vec<Square>,
 }
 
 impl World {
-    pub fn push_block(&mut self, block: Block) {
+    pub fn push_block(&mut self, block: Square) {
         self.blocks.push(block);
     }
 }
 
 impl World {
     fn to_mesh(&self) -> Mesh {
-        let mut vertices = Vec::with_capacity(self.blocks.len() * 4);
-        let mut indices = Vec::with_capacity(self.blocks.len() * 6);
+        let mut mesh = Mesh::with_capacity(self.blocks.len() * 6);
 
-        for (i, block) in self.blocks.iter().enumerate() {
-            let [x, y, z] = block.center_pos;
-            let top_left = [x - 0.5, y - 0.5, z];
-            let top_right = [x + 0.5, y - 0.5, z];
-            let bottom_left = [x - 0.5, y + 0.5, z];
-            let bottom_right = [x + 0.5, y + 0.5, z];
-            vertices.push(Vertex {
-                center_pos: block.center_pos,
-                pos: top_left,
-                color: block.color,
-                rotation: block.rotation,
-            });
-            vertices.push(Vertex {
-                center_pos: block.center_pos,
-                pos: top_right,
-                color: block.color,
-                rotation: block.rotation,
-            });
-            vertices.push(Vertex {
-                center_pos: block.center_pos,
-                pos: bottom_left,
-                color: block.color,
-                rotation: block.rotation,
-            });
-            vertices.push(Vertex {
-                center_pos: block.center_pos,
-                pos: bottom_right,
-                color: block.color,
-                rotation: block.rotation,
-            });
-
-            #[allow(clippy::identity_op)]
-            indices.push(i as u32 * 4 + 0);
-            indices.push(i as u32 * 4 + 1);
-            indices.push(i as u32 * 4 + 2);
-            indices.push(i as u32 * 4 + 1);
-            indices.push(i as u32 * 4 + 2);
-            indices.push(i as u32 * 4 + 3);
+        for block in &self.blocks {
+            mesh.append(block);
         }
-
-        Mesh { vertices, indices }
+        mesh
     }
 }
 
@@ -404,7 +339,7 @@ impl Engine {
                 self.queue.device().clone(),
                 BufferUsage::all(),
                 false,
-                mesh.indices.iter().cloned(),
+                mesh.indices().iter().cloned(),
             )
             .unwrap();
 
@@ -412,7 +347,7 @@ impl Engine {
                 self.queue.device().clone(),
                 BufferUsage::all(),
                 false,
-                mesh.vertices.iter().cloned(),
+                mesh.vertices().iter().cloned(),
             )
             .unwrap();
 
@@ -476,7 +411,7 @@ impl Engine {
         // get z range from 5 to 70
         let z = (random % (70 - 5)) + 5;
 
-        let block = Block {
+        let block = Square {
             center_pos: [pos[0], pos[1], z as f32],
             // use the current background color
             color: [self.r, self.g, self.b, 1.0],

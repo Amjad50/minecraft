@@ -1,6 +1,7 @@
 mod camera;
 mod display;
 mod engine;
+mod object;
 
 use std::time::Instant;
 
