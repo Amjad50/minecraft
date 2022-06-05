@@ -21,13 +21,13 @@ use vulkano::{
     sync::GpuFuture,
 };
 use winit::event::{
-    ElementState, Event, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta,
-    VirtualKeyCode, WindowEvent,
+    ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, VirtualKeyCode, WindowEvent,
 };
 
 use crate::{
     camera::Camera,
-    object::{cube::Cube, Mesh, Square, Vertex},
+    object::{Instance, Vertex},
+    world::World,
 };
 
 mod vs {
@@ -49,36 +49,6 @@ mod fs {
     }
 }
 
-#[derive(Default)]
-struct World {
-    cubes: Vec<Cube>,
-    squares: Vec<Square>,
-}
-
-impl World {
-    pub fn push_cube(&mut self, block: Cube) {
-        self.cubes.push(block);
-    }
-
-    pub fn push_square(&mut self, block: Square) {
-        self.squares.push(block);
-    }
-}
-
-impl World {
-    fn to_mesh(&self) -> Mesh {
-        let mut mesh = Mesh::with_capacity(self.cubes.len() * 6);
-
-        for block in &self.cubes {
-            mesh.append(block);
-        }
-        for block in &self.squares {
-            mesh.append(block);
-        }
-        mesh
-    }
-}
-
 /// Minecraft engine and renderer (for now)
 pub(crate) struct Engine {
     queue: Arc<Queue>,
@@ -90,17 +60,8 @@ pub(crate) struct Engine {
 
     depth_buffer: Arc<ImageView<AttachmentImage>>,
 
-    // background coloring components
-    r: f32,
-    r_inc: f32,
-    g: f32,
-    g_inc: f32,
-    b: f32,
-    b_inc: f32,
-
     // current mouse position for placing a block
     mouse_position: [f32; 2],
-    should_place_square: bool,
     holding_cursor: bool,
     // viewport saved size for placing a block
     viewport_size: [f32; 2],
@@ -141,7 +102,11 @@ impl Engine {
         let fs = fs::load(queue.device().clone()).unwrap();
 
         let graphics_pipeline = GraphicsPipeline::start()
-            .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
+            .vertex_input_state(
+                BuffersDefinition::new()
+                    .vertex::<Vertex>()
+                    .instance::<Instance>(),
+            )
             .input_assembly_state(InputAssemblyState {
                 topology: PartialStateMode::Fixed(PrimitiveTopology::TriangleList),
                 primitive_restart_enable: StateMode::Fixed(false),
@@ -177,6 +142,11 @@ impl Engine {
         )
         .unwrap();
 
+        let mut world = World::default();
+        for i in 0..40 {
+            world.create_chunk(i * 16, 60, i * 16, [1., 0., 0., 1.]);
+        }
+
         Self {
             queue,
             render_pass,
@@ -186,39 +156,16 @@ impl Engine {
 
             depth_buffer,
 
-            r: 1.0,
-            r_inc: 0.006,
-            g: 0.0,
-            g_inc: 0.01,
-            b: 0.0,
-            b_inc: 0.015,
-
             mouse_position: [0., 0.],
-            should_place_square: false,
             holding_cursor: false,
             viewport_size: [0., 0.],
-            world: World::default(),
-            camera: Camera::new(45., 0.0, 0.1, 100., [0., 0., 0.].into()),
+            world,
+            camera: Camera::new(45., 0.0, 0.1, 100., [0., 65., -5.].into()),
         }
     }
 
     pub fn handle_events(&mut self, _event: Event<()>) {
         match _event {
-            Event::WindowEvent {
-                event: WindowEvent::ModifiersChanged(state),
-                ..
-            } => {
-                self.should_place_square = state.intersects(ModifiersState::SHIFT);
-            }
-            Event::WindowEvent {
-                event:
-                    WindowEvent::MouseInput {
-                        button: MouseButton::Left,
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => self.place_block(),
             Event::WindowEvent {
                 event:
                     WindowEvent::MouseInput {
@@ -286,44 +233,7 @@ impl Engine {
         }
     }
 
-    pub fn update(&mut self, delta: Duration) {
-        self.r += self.r_inc * delta.as_secs_f32() * 100.;
-        self.g += self.g_inc * delta.as_secs_f32() * 100.;
-        self.b += self.b_inc * delta.as_secs_f32() * 100.;
-
-        if self.r > 1.0 {
-            self.r_inc = -self.r_inc;
-            self.r = 1.0;
-        } else if self.r < 0.0 {
-            self.r_inc = -self.r_inc;
-            self.r = 0.0;
-        }
-        if self.g > 1.0 {
-            self.g_inc = -self.g_inc;
-            self.g = 1.0;
-        } else if self.g < 0.0 {
-            self.g_inc = -self.g_inc;
-            self.g = 0.0;
-        }
-        if self.b > 1.0 {
-            self.b_inc = -self.b_inc;
-            self.b = 1.0;
-        } else if self.b < 0.0 {
-            self.b_inc = -self.b_inc;
-            self.b = 0.0;
-        }
-
-        for block in &mut self.world.cubes {
-            block.rotation[0] += 0.01 * 60. * delta.as_secs_f32();
-            block.rotation[1] += 0.03 * 60. * delta.as_secs_f32();
-            block.rotation[2] += 0.05 * 60. * delta.as_secs_f32();
-        }
-        for block in &mut self.world.squares {
-            block.rotation[0] += 0.01 * 60. * delta.as_secs_f32();
-            block.rotation[1] += 0.03 * 60. * delta.as_secs_f32();
-            block.rotation[2] += 0.05 * 60. * delta.as_secs_f32();
-        }
-    }
+    pub fn update(&mut self, _delta: Duration) {}
 
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
     where
@@ -369,13 +279,14 @@ impl Engine {
                 framebuffer,
                 SubpassContents::Inline,
                 vec![
-                    ClearValue::Float([self.r, self.g, self.b, 1.0]),
+                    // blue sky color
+                    ClearValue::Float([0., 0.7, 1., 1.0]),
                     ClearValue::Depth(0.0),
                 ],
             )
             .unwrap();
 
-        let mesh = self.world.to_mesh();
+        let mesh = self.world.mesh();
 
         if !mesh.is_empty() {
             let index_buffer = CpuAccessibleBuffer::from_iter(
@@ -391,6 +302,14 @@ impl Engine {
                 BufferUsage::all(),
                 false,
                 mesh.vertices().iter().cloned(),
+            )
+            .unwrap();
+
+            let instance_buffer = CpuAccessibleBuffer::from_iter(
+                self.queue.device().clone(),
+                BufferUsage::all(),
+                false,
+                mesh.instances().iter().cloned(),
             )
             .unwrap();
 
@@ -425,9 +344,15 @@ impl Engine {
                     descriptor_set,
                 )
                 .bind_index_buffer(index_buffer.clone())
-                .bind_vertex_buffers(0, vec![vertex_buffer])
+                .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
                 .bind_pipeline_graphics(self.graphics_pipeline.clone())
-                .draw_indexed(index_buffer.len() as u32, 1, 0, 0, 0)
+                .draw_indexed(
+                    index_buffer.len() as u32,
+                    instance_buffer.len() as u32,
+                    0,
+                    0,
+                    0,
+                )
                 .unwrap();
         }
 
@@ -439,51 +364,5 @@ impl Engine {
             .then_execute(self.queue.clone(), command_buffer)
             .unwrap()
             .boxed()
-    }
-}
-
-impl Engine {
-    /// Places block in the current mouse position
-    fn place_block(&mut self) {
-        // normalize position using viewport
-        // this will just be able to normalize in the same direction
-        // but the position will be very wrong, since we are using
-        // perspective projection, we can retreive the correct position, but
-        // its a bit of a hassle, since this will be removed anyway
-        let pos = [
-            (self.mouse_position[0] - self.viewport_size[0] / 2.) / self.viewport_size[0] * 4.,
-            (self.mouse_position[1] - self.viewport_size[1] / 2.) / self.viewport_size[1] * -4.,
-        ];
-
-        // Pseudorandom number generator from the "Xorshift RNGs" paper by George Marsaglia.
-        let mut random = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        random ^= random << 13;
-        random ^= random >> 17;
-        random ^= random << 5;
-
-        // get z range from 5 to 70
-        let z = (random % (70 - 5)) + 5;
-
-        if self.should_place_square {
-            let block = Square {
-                center: [pos[0], pos[1], z as f32].into(),
-                // use the current background color
-                color: [self.r, self.g, self.b, 1.0],
-                normal: [0.0, 0.0, -1.0].into(),
-                rotation: [0.0, 0.0, 0.0],
-            };
-            self.world.push_square(block);
-        } else {
-            let block = Cube {
-                center: [pos[0], pos[1], z as f32].into(),
-                // use the current background color
-                color: [self.r, self.g, self.b, 1.0],
-                rotation: [0.0, 0.0, 0.0],
-            };
-            self.world.push_cube(block);
-        }
     }
 }

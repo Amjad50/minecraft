@@ -1,8 +1,8 @@
 #version 450
 
 layout(location = 0) in vec3 pos;
-layout(location = 1) in vec4 color;
-layout(location = 2) in vec3 normal;
+layout(location = 1) in vec3 normal;
+layout(location = 2) in vec4 color;
 layout(location = 3) in vec3 rotation;
 layout(location = 4) in vec3 translation;
 

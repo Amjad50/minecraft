@@ -2,6 +2,7 @@ mod camera;
 mod display;
 mod engine;
 mod object;
+mod world;
 
 use std::time::Instant;
 
