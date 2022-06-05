@@ -19,7 +19,7 @@ impl World {
         self.dirty = true;
     }
 
-    pub fn create_chunk(&mut self, x: usize, y: usize, z: usize, color: [f32; 4]) {
+    pub fn create_chunk(&mut self, x: isize, y: usize, z: isize, color: [f32; 4]) {
         let start_x = (x / 16) * 16;
         let start_y = y;
         let start_z = (z / 16) * 16;
@@ -28,7 +28,7 @@ impl World {
             for y in 0..start_y {
                 for z in start_z..(start_z + 16) {
                     self.push_cube(Cube {
-                        center: Point3::new(x, y, z).cast().unwrap(),
+                        center: Point3::new(x, y as isize, z).cast().unwrap(),
                         color,
                         rotation: [0.0, 0.0, 0.0],
                     });

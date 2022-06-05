@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use cgmath::Deg;
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
+    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents},
     descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet},
     device::Queue,
@@ -67,6 +67,10 @@ pub(crate) struct Engine {
     viewport_size: [f32; 2],
     // collecting of blocks
     world: World,
+
+    vertex_buffer_pool: CpuBufferPool<Vertex>,
+    instance_buffer_pool: CpuBufferPool<Instance>,
+    index_buffer_pool: CpuBufferPool<u32>,
 
     camera: Camera,
 }
@@ -143,9 +147,21 @@ impl Engine {
         .unwrap();
 
         let mut world = World::default();
-        for i in 0..40 {
+
+        // create many chunks
+        for i in 1..7 {
             world.create_chunk(i * 16, 60, i * 16, [1., 0., 0., 1.]);
+            world.create_chunk(i * 16, 60, i * -16, [0., 1., 0., 1.]);
+            world.create_chunk(i * -16, 60, i * 16, [0., 0., 1., 1.]);
+            world.create_chunk(i * -16, 60, i * -16, [1., 0., 1., 1.]);
         }
+
+        let vertex_buffer_pool =
+            CpuBufferPool::new(queue.device().clone(), BufferUsage::vertex_buffer());
+        let instance_buffer_pool =
+            CpuBufferPool::new(queue.device().clone(), BufferUsage::vertex_buffer());
+        let index_buffer_pool =
+            CpuBufferPool::new(queue.device().clone(), BufferUsage::index_buffer());
 
         Self {
             queue,
@@ -160,7 +176,10 @@ impl Engine {
             holding_cursor: false,
             viewport_size: [0., 0.],
             world,
-            camera: Camera::new(45., 0.0, 0.1, 100., [0., 65., -5.].into()),
+            vertex_buffer_pool,
+            instance_buffer_pool,
+            index_buffer_pool,
+            camera: Camera::new(45., 0.0, 0.1, 100., [0., 125., -25.].into()),
         }
     }
 
@@ -289,29 +308,20 @@ impl Engine {
         let mesh = self.world.mesh();
 
         if !mesh.is_empty() {
-            let index_buffer = CpuAccessibleBuffer::from_iter(
-                self.queue.device().clone(),
-                BufferUsage::all(),
-                false,
-                mesh.indices().iter().cloned(),
-            )
-            .unwrap();
+            let index_buffer = self
+                .index_buffer_pool
+                .chunk(mesh.indices().iter().cloned())
+                .unwrap();
 
-            let vertex_buffer = CpuAccessibleBuffer::from_iter(
-                self.queue.device().clone(),
-                BufferUsage::all(),
-                false,
-                mesh.vertices().iter().cloned(),
-            )
-            .unwrap();
+            let vertex_buffer = self
+                .vertex_buffer_pool
+                .chunk(mesh.vertices().iter().cloned())
+                .unwrap();
 
-            let instance_buffer = CpuAccessibleBuffer::from_iter(
-                self.queue.device().clone(),
-                BufferUsage::all(),
-                false,
-                mesh.instances().iter().cloned(),
-            )
-            .unwrap();
+            let instance_buffer = self
+                .instance_buffer_pool
+                .chunk(mesh.instances().iter().cloned())
+                .unwrap();
 
             self.camera
                 .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
