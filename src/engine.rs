@@ -149,7 +149,7 @@ impl Engine {
         let mut world = World::default();
 
         // create many chunks
-        for i in 1..7 {
+        for i in 1..40 {
             world.create_chunk(i * 16, 60, i * 16, [1., 0., 0., 1.]);
             world.create_chunk(i * 16, 60, i * -16, [0., 1., 0., 1.]);
             world.create_chunk(i * -16, 60, i * 16, [0., 0., 1., 1.]);
