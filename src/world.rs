@@ -46,6 +46,7 @@ impl World {
             for cube in &self.cubes {
                 self.cube_mesh.add_cube(cube);
             }
+            self.dirty = false;
         }
 
         &self.cube_mesh.mesh()
