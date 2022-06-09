@@ -211,15 +211,22 @@ impl Engine {
                 // unfortunately, we can't get the position inside a button
                 // click event, so we have to keep track of it.
                 let mouse_position: [f32; 2] = position.into();
-                let diff = [
+                let angles = [
+                    // movement in x direction in display moves the camera
+                    // around the y axis (yaw)
                     mouse_position[0] - self.mouse_position[0],
-                    mouse_position[1] - self.mouse_position[1],
+                    // movement in y direction in display moves the camera
+                    // around the x axis (pitch)
+                    //
+                    // because the `y` axis is inverted, we have to negate
+                    // the angle here
+                    -(mouse_position[1] - self.mouse_position[1]),
                 ];
                 self.mouse_position = mouse_position;
 
                 if self.holding_cursor {
                     self.camera
-                        .rotate_camera(Deg(diff[0] * 0.1).into(), Deg(diff[1] * 0.10).into());
+                        .rotate_camera(Deg(angles[1] * 0.10), Deg(angles[0] * 0.1));
                 }
             }
             Event::WindowEvent {

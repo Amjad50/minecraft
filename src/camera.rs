@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use cgmath::{Angle, Deg, Euler, Matrix3, Matrix4, Point3, Rad, SquareMatrix, Vector3, Zero};
+use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 
 const LOW_PITCH: Rad<f32> = Rad(-89.0 * PI / 180.0);
 const HIGH_PITCH: Rad<f32> = Rad(89.0 * PI / 180.0);
@@ -27,19 +27,13 @@ pub(crate) struct Camera {
 
 impl Camera {
     pub fn new(fov: f32, aspect: f32, near: f32, far: f32, position: Point3<f32>) -> Camera {
-        // starting angles
-        let yaw = Deg(0.0).into();
-        let pitch = Deg(0.0).into();
-
-        let camera_axes = Euler::new(pitch, yaw, Rad::zero()).into();
-
         Camera {
             position,
 
-            yaw,
-            pitch,
+            yaw: Rad(0.),
+            pitch: Rad(0.),
 
-            camera_axes,
+            camera_axes: Matrix3::identity(),
 
             fov: fov.clamp(1.0, 179.0),
             aspect,
@@ -96,8 +90,13 @@ impl Camera {
 }
 
 impl Camera {
-    pub fn rotate_camera(&mut self, yaw: Rad<f32>, pitch: Rad<f32>) {
-        self.yaw += yaw;
+    pub fn rotate_camera<P: Into<Rad<f32>>, Y: Into<Rad<f32>>>(&mut self, pitch: P, yaw: Y) {
+        let yaw = yaw.into();
+        let pitch = pitch.into();
+
+        // TODO: need to subtract for some reason, would be better to
+        //       stick with the euler rotation direction
+        self.yaw -= yaw;
         self.pitch += pitch;
 
         if self.pitch > HIGH_PITCH {
@@ -106,7 +105,15 @@ impl Camera {
             self.pitch = LOW_PITCH;
         }
 
-        self.camera_axes = Euler::new(self.pitch, self.yaw, Rad::zero()).into();
+        let front = Vector3::new(
+            -self.pitch.cos() * self.yaw.sin(),
+            self.pitch.sin(),
+            self.pitch.cos() * self.yaw.cos(),
+        )
+        .normalize();
+        let up = Vector3::unit_y();
+        let right = up.cross(front).normalize();
+        self.camera_axes = Matrix3::from_cols(right, up, front);
 
         self.view_dirty = true;
     }
