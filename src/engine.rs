@@ -183,8 +183,8 @@ impl Engine {
         }
     }
 
-    pub fn handle_events(&mut self, _event: Event<()>) {
-        match _event {
+    pub fn handle_events(&mut self, event: Event<()>) {
+        match event {
             Event::WindowEvent {
                 event:
                     WindowEvent::MouseInput {

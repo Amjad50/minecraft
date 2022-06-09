@@ -127,7 +127,7 @@ impl Chunk {
     }
 
     #[allow(dead_code)]
-    pub fn cubes<'a>(&'a self) -> impl Iterator<Item = Point3<i32>> + 'a {
+    pub fn cubes(&self) -> impl Iterator<Item = Point3<i32>> + '_ {
         self.cubes.iter().enumerate().filter_map(|(i, cube)| {
             if cube.is_some() {
                 let chunk_pos = Point3::new(
@@ -143,11 +143,11 @@ impl Chunk {
         })
     }
 
-    pub fn cubes_around<'a>(
-        &'a self,
+    pub fn cubes_around(
+        &self,
         pos: Point3<i32>,
         radius: f32,
-    ) -> impl Iterator<Item = Point3<i32>> + 'a {
+    ) -> impl Iterator<Item = Point3<i32>> + '_ {
         let mut cubes = Vec::new();
 
         let chunk_pos = pos - Vector3::new(self.start.x, 0, self.start.y);
@@ -200,7 +200,7 @@ impl World {
         );
         self.chunks
             .entry(chunk_id)
-            .or_insert(Chunk::new(chunk_id.into(), self.dirty.clone()))
+            .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone()))
             .push_cube(block);
     }
 
@@ -211,7 +211,7 @@ impl World {
         let chunk = self
             .chunks
             .entry(chunk_id)
-            .or_insert(Chunk::new(chunk_id.into(), self.dirty.clone()));
+            .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone()));
 
         chunk.remove_cube(pos);
     }
@@ -306,6 +306,6 @@ impl World {
             self.dirty.set(false);
         }
 
-        &self.cube_mesh.mesh()
+        self.cube_mesh.mesh()
     }
 }
