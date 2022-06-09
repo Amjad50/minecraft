@@ -7,6 +7,17 @@ use crate::object::{
     InstancesMesh,
 };
 
+const Y_STRIDE: i32 = 16;
+const Z_STRIDE: i32 = 16 * 256;
+
+const fn index_to_chunk_pos(i: usize) -> Point3<i32> {
+    Point3::new(
+        (i % 16) as i32,
+        ((i / 16) % 256) as i32,
+        (i / 16 / 256) as i32,
+    )
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ChunkCube {
     color: [f32; 4],
@@ -52,7 +63,7 @@ impl Chunk {
                 && chunk_position.z >= 0
                 && chunk_position.z < 16
         );
-        let index = chunk_position.x + chunk_position.y * 16 + chunk_position.z * 16 * 256;
+        let index = chunk_position.x + chunk_position.y * Y_STRIDE + chunk_position.z * Z_STRIDE;
 
         self.cubes[index as usize] = Some(ChunkCube {
             color: cube.color,
@@ -75,7 +86,7 @@ impl Chunk {
                 && chunk_position.z < 16
         );
 
-        let index = chunk_position.x + chunk_position.y * 16 + chunk_position.z * 16 * 256;
+        let index = chunk_position.x + chunk_position.y * Y_STRIDE + chunk_position.z * Z_STRIDE;
 
         self.cubes[index as usize] = None;
         self.dirty = true;
@@ -89,11 +100,8 @@ impl Chunk {
 
             for (i, cube) in self.cubes.iter().enumerate() {
                 if let Some(cube) = cube {
-                    let chunk_pos = Point3::new(
-                        (i % 16) as i32,
-                        ((i / 16) % 256) as i32,
-                        (i / 16 / 256) as i32,
-                    );
+                    let chunk_pos = index_to_chunk_pos(i);
+
                     let is_edge = chunk_pos.x == 0
                         || chunk_pos.x == 15
                         || chunk_pos.y == 0
@@ -102,23 +110,21 @@ impl Chunk {
                         || chunk_pos.z == 15;
 
                     // if cubes on all sides are present, don't draw this one
-                    if !is_edge
-                        && self.cubes[i - 1].is_some()
-                        && self.cubes[i + 1].is_some()
-                        && self.cubes[i - 16].is_some()
-                        && self.cubes[i + 16].is_some()
-                        && self.cubes[i - 256].is_some()
-                        && self.cubes[i + 256].is_some()
+                    if is_edge
+                        || self.cubes[i - 1].is_none()
+                        || self.cubes[i + 1].is_none()
+                        || self.cubes[i - Y_STRIDE as usize].is_none()
+                        || self.cubes[i + Y_STRIDE as usize].is_none()
+                        || self.cubes[i - Z_STRIDE as usize].is_none()
+                        || self.cubes[i + Z_STRIDE as usize].is_none()
                     {
-                        continue;
+                        let pos = chunk_pos + Vector3::new(self.start.x, 0, self.start.y);
+                        self.cube_mesh.add_cube(&Cube {
+                            center: pos.cast().unwrap(),
+                            color: cube.color,
+                            rotation: cube.rotation,
+                        });
                     }
-
-                    let pos = chunk_pos + Vector3::new(self.start.x, 0, self.start.y);
-                    self.cube_mesh.add_cube(&Cube {
-                        center: pos.cast().unwrap(),
-                        color: cube.color,
-                        rotation: cube.rotation,
-                    });
                 }
             }
         }
@@ -130,11 +136,7 @@ impl Chunk {
     pub fn cubes(&self) -> impl Iterator<Item = Point3<i32>> + '_ {
         self.cubes.iter().enumerate().filter_map(|(i, cube)| {
             if cube.is_some() {
-                let chunk_pos = Point3::new(
-                    (i % 16) as i32,
-                    ((i / 16) % 256) as i32,
-                    (i / 16 / 256) as i32,
-                );
+                let chunk_pos = index_to_chunk_pos(i);
                 let pos = chunk_pos + Vector3::new(self.start.x, 0, self.start.y);
                 Some(pos)
             } else {
@@ -164,7 +166,7 @@ impl Chunk {
         for x in min_x..=max_x {
             for y in min_y..=max_y {
                 for z in min_z..=max_z {
-                    let index = x + y * 16 + z * 16 * 256;
+                    let index = x + y * Y_STRIDE + z * Z_STRIDE;
                     if self.cubes[index as usize].is_some() {
                         // is inside radius
                         let cube_pos =
