@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use cgmath::{Deg, Point2};
+use cgmath::{Deg, Point2, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents},
@@ -71,6 +71,8 @@ pub(crate) struct Engine {
     vertex_buffer_pool: CpuBufferPool<Vertex>,
     instance_buffer_pool: CpuBufferPool<Instance>,
     index_buffer_pool: CpuBufferPool<u32>,
+
+    moving_direction: Vector3<f32>,
 
     camera: Camera,
 }
@@ -179,6 +181,7 @@ impl Engine {
             vertex_buffer_pool,
             instance_buffer_pool,
             index_buffer_pool,
+            moving_direction: Vector3::new(0., 0., 0.),
             camera: Camera::new(45., 0.0, 0.1, 100., [0., 125., -25.].into()),
         }
     }
@@ -234,25 +237,44 @@ impl Engine {
                     WindowEvent::KeyboardInput {
                         input:
                             KeyboardInput {
-                                state: ElementState::Pressed,
+                                state,
                                 virtual_keycode: Some(keycode),
                                 ..
                             },
                         ..
                     },
                 ..
-            } => match keycode {
-                VirtualKeyCode::W => self.camera.move_camera([0.0, 0.0, 0.2].into()),
-                VirtualKeyCode::S => self.camera.move_camera([0.0, 0.0, -0.2].into()),
-                VirtualKeyCode::A => self.camera.move_camera([-0.2, 0.0, 0.0].into()),
-                VirtualKeyCode::D => self.camera.move_camera([0.2, 0.0, 0.0].into()),
-                _ => {}
-            },
+            } => {
+                let pressed = state == ElementState::Pressed;
+                if pressed {
+                    match keycode {
+                        VirtualKeyCode::W => self.moving_direction.z = 1.,
+                        VirtualKeyCode::S => self.moving_direction.z = -1.,
+                        VirtualKeyCode::D => self.moving_direction.x = 1.,
+                        VirtualKeyCode::A => self.moving_direction.x = -1.,
+                        VirtualKeyCode::Space => self.moving_direction.y = 1.,
+                        VirtualKeyCode::LShift => self.moving_direction.y = -1.,
+                        _ => {}
+                    }
+                } else {
+                    match keycode {
+                        VirtualKeyCode::W | VirtualKeyCode::S => self.moving_direction.z = 0.,
+                        VirtualKeyCode::D | VirtualKeyCode::A => self.moving_direction.x = 0.,
+                        VirtualKeyCode::Space | VirtualKeyCode::LShift => {
+                            self.moving_direction.y = 0.
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
 
-    pub fn update(&mut self, _delta: Duration) {
+    pub fn update(&mut self, delta: Duration) {
+        self.camera
+            .move_camera(self.moving_direction * delta.as_secs_f32() * 50.);
+
         const RADIUS: f32 = 10.;
         self.world.chunks_around_mut_callback(
             Point2::new(
