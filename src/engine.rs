@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use cgmath::Deg;
+use cgmath::{Deg, Point2};
 use vulkano::{
     buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents},
@@ -252,7 +252,24 @@ impl Engine {
         }
     }
 
-    pub fn update(&mut self, _delta: Duration) {}
+    pub fn update(&mut self, _delta: Duration) {
+        const RADIUS: f32 = 10.;
+        self.world.chunks_around_mut_callback(
+            Point2::new(
+                self.camera.position().x as i32,
+                self.camera.position().z as i32,
+            ),
+            RADIUS,
+            |chunk| {
+                for cube in chunk
+                    .cubes_around(self.camera.position().cast::<i32>().unwrap(), RADIUS)
+                    .collect::<Vec<_>>()
+                {
+                    chunk.remove_cube(cube);
+                }
+            },
+        );
+    }
 
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
     where

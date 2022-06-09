@@ -54,6 +54,10 @@ impl Camera {
         }
     }
 
+    pub fn position(&self) -> &Point3<f32> {
+        &self.position
+    }
+
     pub fn reversed_depth_perspective(&mut self) -> cgmath::Matrix4<f32> {
         if self.perspective_dirty {
             // convert to radians

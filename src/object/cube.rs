@@ -139,4 +139,8 @@ impl CubeMesh {
             rotation: cube.rotation,
         });
     }
+
+    pub fn add_mesh(&mut self, mesh: &CubeMesh) {
+        self.mesh.append_instances(mesh.mesh().instances());
+    }
 }

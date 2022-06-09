@@ -58,4 +58,8 @@ impl InstancesMesh {
     pub fn append_instance(&mut self, instance: Instance) {
         self.instances.push(instance);
     }
+
+    pub fn append_instances(&mut self, instances: &[Instance]) {
+        self.instances.extend_from_slice(instances);
+    }
 }
