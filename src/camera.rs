@@ -1,9 +1,16 @@
 use std::f32::consts::PI;
 
-use cgmath::{Angle, Deg, InnerSpace, Matrix3, Matrix4, Point3, Rad, SquareMatrix, Vector3};
+use cgmath::{Angle, InnerSpace, Matrix3, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 
-const LOW_PITCH: Rad<f32> = Rad(-89.0 * PI / 180.0);
-const HIGH_PITCH: Rad<f32> = Rad(89.0 * PI / 180.0);
+const MIN_PITCH: Rad<f32> = Rad(-89.0 * PI / 180.0);
+const MAX_PITCH: Rad<f32> = Rad(89.0 * PI / 180.0);
+
+const MIN_FOV: Rad<f32> = Rad(1.0 * PI / 180.0);
+const MAX_FOV: Rad<f32> = Rad(179.0 * PI / 180.0);
+
+fn clamp_rad(rad: Rad<f32>, min: Rad<f32>, max: Rad<f32>) -> Rad<f32> {
+    Rad(rad.0.clamp(min.0, max.0))
+}
 
 pub(crate) struct Camera {
     position: Point3<f32>,
@@ -13,7 +20,7 @@ pub(crate) struct Camera {
 
     camera_axes: Matrix3<f32>,
 
-    fov: f32,
+    fov: Rad<f32>,
     aspect: f32,
     near: f32,
     far: f32,
@@ -26,7 +33,13 @@ pub(crate) struct Camera {
 }
 
 impl Camera {
-    pub fn new(fov: f32, aspect: f32, near: f32, far: f32, position: Point3<f32>) -> Camera {
+    pub fn new<F: Into<Rad<f32>>>(
+        fov: F,
+        aspect: f32,
+        near: f32,
+        far: f32,
+        position: Point3<f32>,
+    ) -> Camera {
         Camera {
             position,
 
@@ -35,7 +48,7 @@ impl Camera {
 
             camera_axes: Matrix3::identity(),
 
-            fov: fov.clamp(1.0, 179.0),
+            fov: clamp_rad(fov.into(), MIN_FOV, MAX_FOV),
             aspect,
             near,
             far,
@@ -54,10 +67,8 @@ impl Camera {
 
     pub fn reversed_depth_perspective(&mut self) -> cgmath::Matrix4<f32> {
         if self.perspective_dirty {
-            // convert to radians
-            let fov_rad: Rad<f32> = Deg(self.fov).into();
             // compute the focal length (1 / tan(fov / 2))
-            let focal_length = (fov_rad / 2.0).cot();
+            let focal_length = (self.fov / 2.0).cot();
 
             // projection matrix, this uses reversed depth (near is 1, far is 0)
             // this matrix is transposed to work for the shader
@@ -97,13 +108,7 @@ impl Camera {
         // TODO: need to subtract for some reason, would be better to
         //       stick with the euler rotation direction
         self.yaw -= yaw;
-        self.pitch += pitch;
-
-        if self.pitch > HIGH_PITCH {
-            self.pitch = HIGH_PITCH;
-        } else if self.pitch < LOW_PITCH {
-            self.pitch = LOW_PITCH;
-        }
+        self.pitch = clamp_rad(self.pitch + pitch, MIN_PITCH, MAX_PITCH);
 
         let front = Vector3::new(
             -self.pitch.cos() * self.yaw.sin(),
@@ -123,6 +128,11 @@ impl Camera {
         self.view_dirty = true;
     }
 
+    pub fn set_position(&mut self, position: Point3<f32>) {
+        self.position = position;
+        self.view_dirty = true;
+    }
+
     pub fn set_aspect(&mut self, aspect: f32) {
         if self.aspect != aspect {
             self.aspect = aspect;
@@ -130,8 +140,8 @@ impl Camera {
         }
     }
 
-    pub fn zoom(&mut self, delta: f32) {
-        let fov = (self.fov + delta).clamp(1.0, 179.0);
+    pub fn zoom<F: Into<Rad<f32>>>(&mut self, delta: F) {
+        let fov = clamp_rad(self.fov + delta.into(), MIN_FOV, MAX_FOV);
 
         if self.fov != fov {
             self.fov = fov;

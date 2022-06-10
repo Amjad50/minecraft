@@ -182,7 +182,7 @@ impl Engine {
             instance_buffer_pool,
             index_buffer_pool,
             moving_direction: Vector3::new(0., 0., 0.),
-            camera: Camera::new(45., 0.0, 0.1, 100., [0., 125., -25.].into()),
+            camera: Camera::new(Deg(45.), 0.0, 0.1, 100., [0., 125., -25.].into()),
         }
     }
 
@@ -237,7 +237,7 @@ impl Engine {
                     },
                 ..
             } => {
-                self.camera.zoom(y as f32 * 1.);
+                self.camera.zoom(Deg(y as f32 * 1.));
             }
             Event::WindowEvent {
                 event:
