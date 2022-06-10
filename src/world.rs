@@ -2,10 +2,7 @@ use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 use cgmath::{InnerSpace, Point2, Point3, Vector3};
 
-use crate::object::{
-    cube::{Cube, CubeMesh},
-    InstancesMesh,
-};
+use crate::object::{cube::Cube, InstancesMesh};
 
 const Y_STRIDE: i32 = 16;
 const Z_STRIDE: i32 = 16 * 256;
@@ -28,7 +25,7 @@ pub(crate) struct Chunk {
     start: Point2<i32>,
     cubes: Box<[Option<ChunkCube>; 16 * 256 * 16]>,
 
-    cube_mesh: CubeMesh,
+    mesh: InstancesMesh<Cube>,
     dirty: bool,
     world_dirty_ref: Rc<Cell<bool>>,
 }
@@ -40,7 +37,7 @@ impl Chunk {
             cubes: Box::new([None; 16 * 256 * 16]),
             start,
 
-            cube_mesh: CubeMesh::default(),
+            mesh: InstancesMesh::new().unwrap(),
             dirty: true,
             world_dirty_ref,
         }
@@ -93,9 +90,9 @@ impl Chunk {
         self.world_dirty_ref.set(true);
     }
 
-    fn add_to_mesh(&mut self, mesh: &mut CubeMesh) {
+    fn add_to_mesh(&mut self, mesh: &mut InstancesMesh<Cube>) {
         if self.dirty {
-            self.cube_mesh = CubeMesh::default();
+            self.mesh = InstancesMesh::new().unwrap();
             self.dirty = false;
 
             for (i, cube) in self.cubes.iter().enumerate() {
@@ -119,7 +116,7 @@ impl Chunk {
                         || self.cubes[i + Z_STRIDE as usize].is_none()
                     {
                         let pos = chunk_pos + Vector3::new(self.start.x, 0, self.start.y);
-                        self.cube_mesh.add_cube(&Cube {
+                        self.mesh.append_instance(&Cube {
                             center: pos.cast().unwrap(),
                             color: cube.color,
                             rotation: cube.rotation,
@@ -129,7 +126,7 @@ impl Chunk {
             }
         }
 
-        mesh.add_mesh(&self.cube_mesh);
+        mesh.extend_mesh(&self.mesh);
     }
 
     #[allow(dead_code)]
@@ -185,12 +182,21 @@ impl Chunk {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct World {
     chunks: HashMap<(i32, i32), Chunk>,
 
-    cube_mesh: CubeMesh,
+    mesh: InstancesMesh<Cube>,
     dirty: Rc<Cell<bool>>,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self {
+            chunks: HashMap::new(),
+            mesh: InstancesMesh::new().unwrap(),
+            dirty: Rc::new(Cell::new(false)),
+        }
+    }
 }
 
 impl World {
@@ -298,16 +304,16 @@ impl World {
 }
 
 impl World {
-    pub(crate) fn mesh(&mut self) -> &InstancesMesh {
+    pub(crate) fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty.get() {
-            self.cube_mesh = CubeMesh::default();
+            self.mesh = InstancesMesh::new().unwrap();
 
             for chunk in self.chunks.values_mut() {
-                chunk.add_to_mesh(&mut self.cube_mesh);
+                chunk.add_to_mesh(&mut self.mesh);
             }
             self.dirty.set(false);
         }
 
-        self.cube_mesh.mesh()
+        &self.mesh
     }
 }

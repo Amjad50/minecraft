@@ -1,3 +1,5 @@
+use std::{fmt, marker::PhantomData};
+
 use bytemuck::{Pod, Zeroable};
 use vulkano::impl_vertex;
 
@@ -23,20 +25,53 @@ pub struct Instance {
 }
 impl_vertex!(Instance, color, rotation, translation);
 
-#[derive(Default)]
-pub struct InstancesMesh {
+#[derive(Debug)]
+pub enum InstancesMeshError {
+    EmptyVertices,
+    EmptyIndices,
+}
+
+impl std::error::Error for InstancesMeshError {}
+
+impl fmt::Display for InstancesMeshError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            InstancesMeshError::EmptyVertices => write!(f, "Cannot use mesh with no vertices"),
+            InstancesMeshError::EmptyIndices => write!(f, "Cannot use mesh with no indices"),
+        }
+    }
+}
+
+pub trait Mesh {
+    fn mesh() -> (Vec<Vertex>, Vec<u32>);
+    fn to_instance(&self) -> Instance;
+}
+
+pub struct InstancesMesh<M: Mesh> {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     instances: Vec<Instance>,
+
+    phantom: PhantomData<M>,
 }
 
-impl InstancesMesh {
-    pub fn with_vertices(vertices: &[Vertex], indices: &[u32]) -> Self {
-        Self {
-            vertices: vertices.to_vec(),
-            indices: indices.to_vec(),
-            instances: Vec::new(),
+impl<M: Mesh> InstancesMesh<M> {
+    pub fn new() -> Result<Self, InstancesMeshError> {
+        let mesh = M::mesh();
+
+        if mesh.0.is_empty() {
+            return Err(InstancesMeshError::EmptyVertices);
         }
+        if mesh.1.is_empty() {
+            return Err(InstancesMeshError::EmptyIndices);
+        }
+
+        Ok(Self {
+            vertices: mesh.0,
+            indices: mesh.1,
+            instances: Vec::new(),
+            phantom: PhantomData,
+        })
     }
 
     pub fn vertices(&self) -> &[Vertex] {
@@ -55,11 +90,11 @@ impl InstancesMesh {
         self.indices.is_empty() || self.instances.is_empty()
     }
 
-    pub fn append_instance(&mut self, instance: Instance) {
-        self.instances.push(instance);
+    pub fn append_instance(&mut self, instance: &M) {
+        self.instances.push(instance.to_instance());
     }
 
-    pub fn append_instances(&mut self, instances: &[Instance]) {
-        self.instances.extend_from_slice(instances);
+    pub fn extend_mesh(&mut self, mesh: &Self) {
+        self.instances.extend_from_slice(&mesh.instances);
     }
 }
