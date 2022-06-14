@@ -18,7 +18,8 @@ pub(crate) struct Camera {
     yaw: Rad<f32>,
     pitch: Rad<f32>,
 
-    camera_axes: Matrix3<f32>,
+    camera_front: Vector3<f32>,
+    movement_axes: Matrix3<f32>,
 
     fov: Rad<f32>,
     aspect: f32,
@@ -46,7 +47,8 @@ impl Camera {
             yaw: Rad(0.),
             pitch: Rad(0.),
 
-            camera_axes: Matrix3::identity(),
+            camera_front: Vector3::unit_z(),
+            movement_axes: Matrix3::identity(),
 
             fov: clamp_rad(fov.into(), MIN_FOV, MAX_FOV),
             aspect,
@@ -66,7 +68,7 @@ impl Camera {
     }
 
     pub fn direction(&self) -> &Vector3<f32> {
-        &self.camera_axes.z
+        &self.camera_front
     }
 
     pub fn reversed_depth_perspective(&mut self) -> cgmath::Matrix4<f32> {
@@ -97,7 +99,7 @@ impl Camera {
 
     pub fn view(&mut self) -> cgmath::Matrix4<f32> {
         if self.view_dirty {
-            self.view = Matrix4::look_to_lh(self.position, self.camera_axes.z, self.camera_axes.y);
+            self.view = Matrix4::look_to_lh(self.position, self.camera_front, Vector3::unit_y());
             self.view_dirty = false;
         }
         self.view
@@ -114,30 +116,30 @@ impl Camera {
         self.yaw -= yaw;
         self.pitch = clamp_rad(self.pitch + pitch, MIN_PITCH, MAX_PITCH);
 
-        let front = Vector3::new(
+        let mut front = Vector3::new(
             -self.pitch.cos() * self.yaw.sin(),
             self.pitch.sin(),
             self.pitch.cos() * self.yaw.cos(),
         )
         .normalize();
+        self.camera_front = front;
+        // don't move up and down based on direction
+        front.y = 0.;
+        front = front.normalize();
+
         let up = Vector3::unit_y();
         let right = up.cross(front).normalize();
-        self.camera_axes = Matrix3::from_cols(right, up, front);
+        self.movement_axes = Matrix3::from_cols(right, up, front);
 
         self.view_dirty = true;
     }
 
     pub fn move_camera(&mut self, direction: Vector3<f32>) {
-        let mut front = self.camera_axes.z;
-        // don't move up and down based on direction
-        front.y = 0.;
-        let up = Vector3::unit_y();
-        let right = up.cross(front).normalize();
-
-        self.position += Matrix3::from_cols(right, up, front) * direction;
+        self.position += self.movement_axes * direction;
         self.view_dirty = true;
     }
 
+    #[allow(dead_code)]
     pub fn set_position(&mut self, position: Point3<f32>) {
         self.position = position;
         self.view_dirty = true;
