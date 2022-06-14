@@ -15,6 +15,10 @@ const fn index_to_chunk_pos(i: usize) -> Point3<i32> {
     )
 }
 
+const fn chunk_pos_to_index(chunk_pos: Point3<i32>) -> usize {
+    (chunk_pos.x + chunk_pos.y * Y_STRIDE + chunk_pos.z * Z_STRIDE) as usize
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ChunkCube {
     color: [f32; 4],
@@ -43,6 +47,26 @@ impl Chunk {
         }
     }
 
+    fn in_relative_chunk_pos(&self, pos: Point3<i32>) -> Point3<i32> {
+        pos - Vector3::new(self.start.x, 0, self.start.y)
+    }
+
+    fn in_chunk_pos(&self, pos: Point3<i32>) -> Option<Point3<i32>> {
+        let chunk_pos = self.in_relative_chunk_pos(pos);
+
+        if chunk_pos.x >= 0
+            && chunk_pos.x < 16
+            && chunk_pos.y >= 0
+            && chunk_pos.y < 256
+            && chunk_pos.z >= 0
+            && chunk_pos.z < 16
+        {
+            Some(chunk_pos)
+        } else {
+            None
+        }
+    }
+
     #[allow(dead_code)]
     pub fn start(&self) -> &Point2<i32> {
         &self.start
@@ -50,19 +74,12 @@ impl Chunk {
 
     pub fn push_cube(&mut self, cube: Cube) {
         let position = cube.center.cast::<i32>().unwrap();
-        let chunk_position = position - Vector3::new(self.start.x, 0, self.start.y);
+        // must be inside the chunk
+        let chunk_position = self.in_chunk_pos(position).unwrap();
 
-        assert!(
-            chunk_position.x >= 0
-                && chunk_position.x < 16
-                && chunk_position.y >= 0
-                && chunk_position.y < 256
-                && chunk_position.z >= 0
-                && chunk_position.z < 16
-        );
-        let index = chunk_position.x + chunk_position.y * Y_STRIDE + chunk_position.z * Z_STRIDE;
+        let index = chunk_pos_to_index(chunk_position);
 
-        self.cubes[index as usize] = Some(ChunkCube {
+        self.cubes[index] = Some(ChunkCube {
             color: cube.color,
             rotation: cube.rotation,
         });
@@ -72,20 +89,12 @@ impl Chunk {
     }
 
     pub fn remove_cube(&mut self, pos: Point3<i32>) {
-        let chunk_position = pos - Vector3::new(self.start.x, 0, self.start.y);
+        // must be inside the chunk
+        let chunk_position = self.in_chunk_pos(pos).unwrap();
 
-        assert!(
-            chunk_position.x >= 0
-                && chunk_position.x < 16
-                && chunk_position.y >= 0
-                && chunk_position.y < 256
-                && chunk_position.z >= 0
-                && chunk_position.z < 16
-        );
+        let index = chunk_pos_to_index(chunk_position);
 
-        let index = chunk_position.x + chunk_position.y * Y_STRIDE + chunk_position.z * Z_STRIDE;
-
-        self.cubes[index as usize] = None;
+        self.cubes[index] = None;
         self.dirty = true;
         self.world_dirty_ref.set(true);
     }
@@ -142,6 +151,8 @@ impl Chunk {
         })
     }
 
+    /// Returns cubes around the given position with the given radius
+    #[allow(dead_code)]
     pub fn cubes_around(
         &self,
         pos: Point3<i32>,
@@ -149,7 +160,7 @@ impl Chunk {
     ) -> impl Iterator<Item = Point3<i32>> + '_ {
         let mut cubes = Vec::new();
 
-        let chunk_pos = pos - Vector3::new(self.start.x, 0, self.start.y);
+        let chunk_pos = self.in_relative_chunk_pos(pos);
 
         // get the size of the cube around pos with radius
         let area_cube_radius = radius.ceil() as i32;
@@ -163,8 +174,8 @@ impl Chunk {
         for x in min_x..=max_x {
             for y in min_y..=max_y {
                 for z in min_z..=max_z {
-                    let index = x + y * Y_STRIDE + z * Z_STRIDE;
-                    if self.cubes[index as usize].is_some() {
+                    let index = chunk_pos_to_index(Point3::new(x, y, z));
+                    if self.cubes[index].is_some() {
                         // is inside radius
                         let cube_pos =
                             Point3::new(x, y, z) + Vector3::new(self.start.x, 0, self.start.y);
@@ -179,6 +190,118 @@ impl Chunk {
         }
 
         cubes.into_iter()
+    }
+
+    pub fn cube_looking_at(
+        &self,
+        origin: &Point3<f32>,
+        direction: &Vector3<f32>,
+        max_radius: f32,
+    ) -> Option<Point3<i32>> {
+        let chunk_pos = self.in_relative_chunk_pos(origin.cast::<i32>().unwrap());
+        let direction = direction.normalize();
+
+        let inside = chunk_pos.x >= 0
+            && chunk_pos.x < 16
+            && chunk_pos.y >= 0
+            && chunk_pos.y < 256
+            && chunk_pos.z >= 0
+            && chunk_pos.z < 16;
+
+        if inside {
+            return self.cube_looking_at_inside(&origin, &direction, max_radius);
+        }
+
+        None
+    }
+
+    // Reference: https://playtechs.blogspot.com/2007/03/raytracing-on-grid.html
+    /// `origin` must be inside the chunk, and that is guaranteed by the caller
+    fn cube_looking_at_inside(
+        &self,
+        origin: &Point3<f32>,
+        direction: &Vector3<f32>,
+        max_radius: f32,
+    ) -> Option<Point3<i32>> {
+        let origin_i32 = origin.map(|a| a.round() as i32);
+        let max_radius_i32 = max_radius.ceil() as i32;
+        let mut current = origin_i32;
+
+        let dt_dx = 1. / direction.x.abs();
+        let dt_dy = 1. / direction.y.abs();
+        let dt_dz = 1. / direction.z.abs();
+
+        let mut t_next_x;
+        let mut t_next_y;
+        let mut t_next_z;
+        let inc_x = if direction.x == 0. {
+            t_next_x = std::f32::INFINITY;
+            0
+        } else if direction.x < 0. {
+            t_next_x = (origin.x + 0.5 - origin.x.round()) * dt_dx;
+            -1
+        } else {
+            t_next_x = (origin.x.round() + 0.5 - origin.x) * dt_dx;
+            1
+        };
+        let inc_y = if direction.y == 0. {
+            t_next_y = std::f32::INFINITY;
+            0
+        } else if direction.y < 0. {
+            t_next_y = (origin.y + 0.5 - origin.y.round()) * dt_dy;
+            -1
+        } else {
+            t_next_y = (origin.y.round() + 0.5 - origin.y) * dt_dy;
+            1
+        };
+        let inc_z = if direction.z == 0. {
+            t_next_z = std::f32::INFINITY;
+            0
+        } else if direction.z < 0. {
+            t_next_z = (origin.z + 0.5 - origin.z.round()) * dt_dz;
+            -1
+        } else {
+            t_next_z = (origin.z.round() + 0.5 - origin.z) * dt_dz;
+            1
+        };
+
+        let inc = Vector3::new(inc_x, inc_y, inc_z);
+
+        loop {
+            if let Some(chunk_pos) = self.in_chunk_pos(current) {
+                let index = chunk_pos_to_index(chunk_pos);
+                if self.cubes[index].is_some() {
+                    return Some(current);
+                }
+            } else {
+                break;
+            }
+
+            if t_next_x < t_next_y {
+                if t_next_x < t_next_z {
+                    current.x += inc.x;
+                    t_next_x += dt_dx;
+                } else {
+                    current.z += inc.z;
+                    t_next_z += dt_dz;
+                }
+            } else {
+                if t_next_y < t_next_z {
+                    current.y += inc.y;
+                    t_next_y += dt_dy;
+                } else {
+                    current.z += inc.z;
+                    t_next_z += dt_dz;
+                }
+            }
+
+            let distance = (current - origin_i32).magnitude2(); // squared distance
+            if distance > max_radius_i32 * max_radius_i32 {
+                return None;
+            }
+        }
+
+        None
     }
 }
 
@@ -280,6 +403,7 @@ impl World {
 
     /// Since we can't create a mut iterator easily because of lifetimes errors,
     /// we used callback function to mutate chunks if needed.
+    #[allow(dead_code)]
     pub fn chunks_around_mut_callback(
         &mut self,
         pos: Point2<i32>,
@@ -300,6 +424,27 @@ impl World {
                 }
             }
         }
+    }
+
+    pub fn cube_looking_at(
+        &self,
+        origin: &Point3<f32>,
+        direction: &Vector3<f32>,
+        max_radius: f32,
+    ) -> Option<Point3<i32>> {
+        let chunk_containing_origin = (
+            (origin.x.round() as i32) / 16 * 16,
+            (origin.z.round() as i32) / 16 * 16,
+        );
+
+        // check current chunk
+        if let Some(chunk) = self.chunks.get(&chunk_containing_origin) {
+            if let Some(cube) = chunk.cube_looking_at(origin, direction, max_radius) {
+                return Some(cube);
+            }
+        }
+
+        None
     }
 }
 

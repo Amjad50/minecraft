@@ -1,6 +1,6 @@
 use std::{f32::consts::PI, sync::Arc, time::Duration};
 
-use cgmath::{Deg, Point2, Vector3};
+use cgmath::{Deg, Point2, Point3, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
@@ -97,6 +97,7 @@ pub(crate) struct Engine {
     moving_direction: Vector3<f32>,
 
     camera: Camera,
+    looking_at_cube: Option<Point3<i32>>,
 }
 
 impl Engine {
@@ -193,11 +194,22 @@ impl Engine {
         let mut world = World::default();
 
         // create many chunks
-        for i in 1..40 {
-            world.create_chunk(i * 16, 60, i * 16, [1., 0., 0., 1.]);
-            world.create_chunk(i * 16, 60, i * -16, [0., 1., 0., 1.]);
-            world.create_chunk(i * -16, 60, i * 16, [0., 0., 1., 1.]);
-            world.create_chunk(i * -16, 60, i * -16, [1., 0., 1., 1.]);
+        let x_size = 3;
+        let y_size = 3;
+        for x in 0..x_size {
+            for y in 0..y_size {
+                world.create_chunk(
+                    x * 16,
+                    60,
+                    y * 16,
+                    [
+                        x as f32 / x_size as f32,
+                        y as f32 / y_size as f32,
+                        (x + y) as f32 / (x_size + y_size) as f32,
+                        1.,
+                    ],
+                );
+            }
         }
 
         let vertex_buffer_pool =
@@ -226,6 +238,7 @@ impl Engine {
             index_buffer_pool,
             moving_direction: Vector3::new(0., 0., 0.),
             camera: Camera::new(Deg(45.), 0.0, 0.1, 100., [0., 125., -25.].into()),
+            looking_at_cube: None,
         }
     }
 
@@ -325,22 +338,32 @@ impl Engine {
         self.camera
             .move_camera(self.moving_direction * delta.as_secs_f32() * 50.);
 
-        const RADIUS: f32 = 10.;
+        const DELETE_RADIUS: f32 = 10.;
+        const LOOK_RADIUS: f32 = 100.;
+
         self.world.chunks_around_mut_callback(
             Point2::new(
                 self.camera.position().x as i32,
                 self.camera.position().z as i32,
             ),
-            RADIUS,
+            DELETE_RADIUS,
             |chunk| {
                 for cube in chunk
-                    .cubes_around(self.camera.position().cast::<i32>().unwrap(), RADIUS)
+                    .cubes_around(self.camera.position().cast::<i32>().unwrap(), DELETE_RADIUS)
                     .collect::<Vec<_>>()
                 {
                     chunk.remove_cube(cube);
                 }
             },
         );
+
+        self.looking_at_cube = None;
+        if let Some(cube) =
+            self.world
+                .cube_looking_at(self.camera.position(), self.camera.direction(), LOOK_RADIUS)
+        {
+            self.looking_at_cube = Some(cube);
+        }
     }
 
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
@@ -420,6 +443,10 @@ impl Engine {
                 .next(cubes_vs::ty::UniformData {
                     perspective: self.camera.reversed_depth_perspective().into(),
                     view: self.camera.view().into(),
+                    selected: self.looking_at_cube.map_or([0., 0., 0., 0.], |v| {
+                        // the 'w' component will be `1`, which means enable `selected`
+                        v.cast::<f32>().unwrap().to_homogeneous().into()
+                    }),
                 })
                 .unwrap();
             let descriptor_set = self

@@ -8,10 +8,12 @@ layout(location = 4) in vec3 translation;
 
 layout(location = 0) out vec4 v_color;
 layout(location = 1) out vec3 v_normal;
+layout(location = 2) flat out uint v_selected;
 
 layout(set = 0, binding = 0) uniform UniformData {
     mat4 perspective;
     mat4 view;
+    vec4 selected;
 } u;
 
 void main() {
@@ -30,6 +32,7 @@ void main() {
         translation, 1
     );
     gl_Position = u.perspective * u.view * object_transform * vec4(pos, 1);
+    v_selected = uint(u.selected.w == 1.0 && (vec3(u.selected) == translation));
 
     // this transformation only works if scaling is uniform 
     // (scaling of x, y, z by the same value), currently, we don't scale so its ok

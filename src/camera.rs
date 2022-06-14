@@ -65,6 +65,10 @@ impl Camera {
         &self.position
     }
 
+    pub fn direction(&self) -> &Vector3<f32> {
+        &self.camera_axes.z
+    }
+
     pub fn reversed_depth_perspective(&mut self) -> cgmath::Matrix4<f32> {
         if self.perspective_dirty {
             // compute the focal length (1 / tan(fov / 2))
@@ -124,7 +128,13 @@ impl Camera {
     }
 
     pub fn move_camera(&mut self, direction: Vector3<f32>) {
-        self.position += self.camera_axes * direction;
+        let mut front = self.camera_axes.z;
+        // don't move up and down based on direction
+        front.y = 0.;
+        let up = Vector3::unit_y();
+        let right = up.cross(front).normalize();
+
+        self.position += Matrix3::from_cols(right, up, front) * direction;
         self.view_dirty = true;
     }
 
