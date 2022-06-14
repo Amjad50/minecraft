@@ -1,9 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{f32::consts::PI, sync::Arc, time::Duration};
 
 use cgmath::{Deg, Point2, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
-    command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents},
+    buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
+    command_buffer::{
+        AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, SubpassContents,
+    },
     descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet},
     device::Queue,
     format::{ClearValue, Format},
@@ -30,10 +32,10 @@ use crate::{
     world::World,
 };
 
-mod vs {
+mod cubes_vs {
     vulkano_shaders::shader! {
         ty: "vertex",
-        path: "src/shaders/vertex.glsl",
+        path: "src/shaders/cubes.vert.glsl",
         types_meta: {
             use bytemuck::{Pod, Zeroable};
 
@@ -42,10 +44,29 @@ mod vs {
     }
 }
 
-mod fs {
+mod cubes_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
-        path: "src/shaders/fragment.glsl"
+        path: "src/shaders/cubes.frag.glsl"
+    }
+}
+
+mod ui_vs {
+    vulkano_shaders::shader! {
+        ty: "vertex",
+        path: "src/shaders/ui.vert.glsl",
+        types_meta: {
+            use bytemuck::{Pod, Zeroable};
+
+            #[derive(Clone, Copy, Zeroable, Pod)]
+        },
+    }
+}
+
+mod ui_fs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        path: "src/shaders/ui.frag.glsl"
     }
 }
 
@@ -54,8 +75,9 @@ pub(crate) struct Engine {
     queue: Arc<Queue>,
 
     render_pass: Arc<RenderPass>,
-    graphics_pipeline: Arc<GraphicsPipeline>,
-    uniform_buffer_pool: CpuBufferPool<vs::ty::UniformData>,
+    cubes_graphics_pipeline: Arc<GraphicsPipeline>,
+    ui_graphics_pipeline: Arc<GraphicsPipeline>,
+    uniform_buffer_pool: CpuBufferPool<cubes_vs::ty::UniformData>,
     descriptor_set_pool: SingleLayoutDescSetPool,
 
     depth_buffer: Arc<ImageView<AttachmentImage>>,
@@ -104,10 +126,13 @@ impl Engine {
         )
         .unwrap();
 
-        let vs = vs::load(queue.device().clone()).unwrap();
-        let fs = fs::load(queue.device().clone()).unwrap();
+        let vs_cubes = cubes_vs::load(queue.device().clone()).unwrap();
+        let fs_cubes = cubes_fs::load(queue.device().clone()).unwrap();
 
-        let graphics_pipeline = GraphicsPipeline::start()
+        let vs_ui = ui_vs::load(queue.device().clone()).unwrap();
+        let fs_ui = ui_fs::load(queue.device().clone()).unwrap();
+
+        let cubes_graphics_pipeline = GraphicsPipeline::start()
             .vertex_input_state(
                 BuffersDefinition::new()
                     .vertex::<Vertex>()
@@ -117,9 +142,9 @@ impl Engine {
                 topology: PartialStateMode::Fixed(PrimitiveTopology::TriangleList),
                 primitive_restart_enable: StateMode::Fixed(false),
             })
-            .vertex_shader(vs.entry_point("main").unwrap(), ())
+            .vertex_shader(vs_cubes.entry_point("main").unwrap(), ())
             .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-            .fragment_shader(fs.entry_point("main").unwrap(), ())
+            .fragment_shader(fs_cubes.entry_point("main").unwrap(), ())
             .depth_stencil_state(DepthStencilState {
                 depth: Some(DepthState {
                     enable_dynamic: false,
@@ -132,10 +157,27 @@ impl Engine {
             .build(queue.device().clone())
             .unwrap();
 
+        let ui_graphics_pipeline = GraphicsPipeline::start()
+            .vertex_input_state(
+                BuffersDefinition::new()
+                    .vertex::<Vertex>()
+                    .instance::<Instance>(),
+            )
+            .input_assembly_state(InputAssemblyState {
+                topology: PartialStateMode::Fixed(PrimitiveTopology::LineList),
+                primitive_restart_enable: StateMode::Fixed(false),
+            })
+            .vertex_shader(vs_ui.entry_point("main").unwrap(), ())
+            .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+            .fragment_shader(fs_ui.entry_point("main").unwrap(), ())
+            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+            .build(queue.device().clone())
+            .unwrap();
+
         let uniform_buffer_pool =
             CpuBufferPool::new(queue.device().clone(), BufferUsage::uniform_buffer());
         let descriptor_set_pool = SingleLayoutDescSetPool::new(
-            graphics_pipeline
+            cubes_graphics_pipeline
                 .layout()
                 .set_layouts()
                 .get(0)
@@ -168,7 +210,8 @@ impl Engine {
         Self {
             queue,
             render_pass,
-            graphics_pipeline,
+            cubes_graphics_pipeline,
+            ui_graphics_pipeline,
             uniform_buffer_pool,
             descriptor_set_pool,
 
@@ -374,7 +417,7 @@ impl Engine {
 
             let uniform_subbuffer = self
                 .uniform_buffer_pool
-                .next(vs::ty::UniformData {
+                .next(cubes_vs::ty::UniformData {
                     perspective: self.camera.reversed_depth_perspective().into(),
                     view: self.camera.view().into(),
                 })
@@ -395,13 +438,13 @@ impl Engine {
                 )
                 .bind_descriptor_sets(
                     PipelineBindPoint::Graphics,
-                    self.graphics_pipeline.layout().clone(),
+                    self.cubes_graphics_pipeline.layout().clone(),
                     0,
                     descriptor_set,
                 )
                 .bind_index_buffer(index_buffer.clone())
                 .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
-                .bind_pipeline_graphics(self.graphics_pipeline.clone())
+                .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone())
                 .draw_indexed(
                     index_buffer.len() as u32,
                     instance_buffer.len() as u32,
@@ -412,6 +455,8 @@ impl Engine {
                 .unwrap();
         }
 
+        self.render_ui(img_size, &mut builder);
+
         builder.end_render_pass().unwrap();
 
         let command_buffer = builder.build().unwrap();
@@ -420,5 +465,72 @@ impl Engine {
             .then_execute(self.queue.clone(), command_buffer)
             .unwrap()
             .boxed()
+    }
+
+    fn render_ui(
+        &mut self,
+        img_size: [u32; 2],
+        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    ) {
+        // create a cross of 20 pixels in size
+        let vertices = [
+            Vertex {
+                pos: [0., 10., 0.],
+                normal: [0., 0., 0.],
+            },
+            Vertex {
+                pos: [0., -10., 0.],
+                normal: [0., 0., 0.],
+            },
+        ];
+
+        let vertex_buffer = CpuAccessibleBuffer::from_iter(
+            self.queue.device().clone(),
+            BufferUsage::vertex_buffer(),
+            false,
+            vertices.iter().cloned(),
+        )
+        .unwrap();
+
+        let instances = [
+            // vertical
+            Instance {
+                color: [1., 1., 1., 1.],
+                rotation: [0., 0., 0.],
+                translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+            },
+            // horizontal (rotated)
+            Instance {
+                color: [1., 1., 1., 1.],
+                rotation: [0., 0., PI / 2.],
+                translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+            },
+        ];
+
+        let instance_buffer = CpuAccessibleBuffer::from_iter(
+            self.queue.device().clone(),
+            BufferUsage::vertex_buffer(),
+            false,
+            instances.iter().cloned(),
+        )
+        .unwrap();
+
+        builder
+            .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+            .bind_pipeline_graphics(self.ui_graphics_pipeline.clone())
+            .push_constants(
+                self.ui_graphics_pipeline.layout().clone(),
+                0,
+                ui_vs::ty::PushConstants {
+                    display_size: img_size,
+                },
+            )
+            .draw(
+                vertex_buffer.len() as u32,
+                instance_buffer.len() as u32,
+                0,
+                0,
+            )
+            .unwrap();
     }
 }

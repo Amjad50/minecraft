@@ -14,7 +14,6 @@ layout(set = 0, binding = 0) uniform UniformData {
     mat4 view;
 } u;
 
-
 void main() {
     float c1 = cos(rotation.x);
     float s1 = sin(rotation.x);
