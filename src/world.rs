@@ -197,7 +197,7 @@ impl Chunk {
         origin: &Point3<f32>,
         direction: &Vector3<f32>,
         max_radius: f32,
-    ) -> Option<Point3<i32>> {
+    ) -> Option<Vec<Point3<i32>>> {
         let chunk_pos = self.in_relative_chunk_pos(origin.cast::<i32>().unwrap());
         let direction = direction.normalize();
 
@@ -222,7 +222,7 @@ impl Chunk {
         origin: &Point3<f32>,
         direction: &Vector3<f32>,
         max_radius: f32,
-    ) -> Option<Point3<i32>> {
+    ) -> Option<Vec<Point3<i32>>> {
         let origin_i32 = origin.map(|a| a.round() as i32);
         let max_radius_i32 = max_radius.ceil() as i32;
         let mut current = origin_i32;
@@ -267,11 +267,14 @@ impl Chunk {
 
         let inc = Vector3::new(inc_x, inc_y, inc_z);
 
+        let mut path = Vec::new();
+
         loop {
+            path.push(current);
             if let Some(chunk_pos) = self.in_chunk_pos(current) {
                 let index = chunk_pos_to_index(chunk_pos);
                 if self.cubes[index].is_some() {
-                    return Some(current);
+                    return Some(path);
                 }
             } else {
                 break;
@@ -431,7 +434,7 @@ impl World {
         origin: &Point3<f32>,
         direction: &Vector3<f32>,
         max_radius: f32,
-    ) -> Option<Point3<i32>> {
+    ) -> Option<Vec<Point3<i32>>> {
         let chunk_containing_origin = (
             (origin.x.round() as i32) / 16 * 16,
             (origin.z.round() as i32) / 16 * 16,

@@ -12,6 +12,7 @@ use vulkano::{
     image::{view::ImageView, AttachmentImage, ImageAccess},
     pipeline::{
         graphics::{
+            color_blend::ColorBlendState,
             depth_stencil::{CompareOp, DepthState, DepthStencilState},
             input_assembly::{InputAssemblyState, PrimitiveTopology},
             vertex_input::BuffersDefinition,
@@ -28,7 +29,7 @@ use winit::event::{
 
 use crate::{
     camera::Camera,
-    object::{Instance, Vertex},
+    object::{cube::Cube, Instance, InstancesMesh, Vertex},
     world::World,
 };
 
@@ -98,6 +99,10 @@ pub(crate) struct Engine {
 
     camera: Camera,
     looking_at_cube: Option<Point3<i32>>,
+    looking_at_cube_snapshot: Option<(Point3<i32>, Point3<f32>, Vector3<f32>)>,
+    debug_cubes: Vec<Point3<i32>>,
+    draw_debug: bool,
+    debug_transparent: bool,
 }
 
 impl Engine {
@@ -154,6 +159,7 @@ impl Engine {
                 }),
                 ..Default::default()
             })
+            .color_blend_state(ColorBlendState::new(1).blend_alpha())
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
             .build(queue.device().clone())
             .unwrap();
@@ -239,6 +245,10 @@ impl Engine {
             moving_direction: Vector3::new(0., 0., 0.),
             camera: Camera::new(Deg(45.), 0.0, 0.1, 100., [0., 125., -25.].into()),
             looking_at_cube: None,
+            looking_at_cube_snapshot: None,
+            debug_cubes: Vec::new(),
+            draw_debug: false,
+            debug_transparent: false,
         }
     }
 
@@ -260,6 +270,51 @@ impl Engine {
                     self.holding_cursor = false;
                 }
             },
+            Event::WindowEvent {
+                event:
+                    WindowEvent::MouseInput {
+                        button: MouseButton::Left,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                self.looking_at_cube_snapshot = None;
+                self.debug_cubes.clear();
+                if let Some(cube) = self.world.cube_looking_at(
+                    self.camera.position(),
+                    self.camera.direction(),
+                    100.,
+                ) {
+                    self.looking_at_cube_snapshot = Some((
+                        *cube.last().unwrap(),
+                        *self.camera.position(),
+                        *self.camera.direction(),
+                    ));
+                    println!("dir: {:?}, looking at {:?}", self.camera.direction(), cube);
+                    self.debug_cubes = cube;
+                }
+            }
+            Event::WindowEvent {
+                event:
+                    WindowEvent::MouseInput {
+                        button: MouseButton::Middle,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                // recacluate the last `look at`
+                if let Some((_, pos, dir)) = self.looking_at_cube_snapshot {
+                    self.debug_cubes.clear();
+                    let old_pos = pos;
+                    if let Some(cube) = self.world.cube_looking_at(&pos, &dir, 100.) {
+                        self.looking_at_cube_snapshot = Some((*cube.last().unwrap(), old_pos, dir));
+                        println!("dir: {:?}, looking at {:?}", dir, cube);
+                        self.debug_cubes = cube;
+                    }
+                }
+            }
             Event::WindowEvent {
                 event: WindowEvent::CursorMoved { position, .. },
                 ..
@@ -311,6 +366,14 @@ impl Engine {
                 let pressed = state == ElementState::Pressed;
                 if pressed {
                     match keycode {
+                        VirtualKeyCode::U => {
+                            self.draw_debug = !self.draw_debug;
+                            println!("show debug cubes? {}", self.draw_debug);
+                        }
+                        VirtualKeyCode::T => {
+                            self.debug_transparent = !self.debug_transparent;
+                            println!("debug transparent? {}", self.debug_transparent);
+                        }
                         VirtualKeyCode::W => self.moving_direction.z = 1.,
                         VirtualKeyCode::S => self.moving_direction.z = -1.,
                         VirtualKeyCode::D => self.moving_direction.x = 1.,
@@ -362,7 +425,7 @@ impl Engine {
             self.world
                 .cube_looking_at(self.camera.position(), self.camera.direction(), LOOK_RADIUS)
         {
-            self.looking_at_cube = Some(cube);
+            self.looking_at_cube = Some(*cube.last().unwrap());
         }
     }
 
@@ -417,7 +480,25 @@ impl Engine {
             )
             .unwrap();
 
-        let mesh = self.world.mesh();
+        let mut mesh = InstancesMesh::new().unwrap();
+        mesh.extend_mesh(self.world.mesh());
+        if let Some((x, _, _)) = self.looking_at_cube_snapshot {
+            mesh.append_instance(&Cube {
+                center: x.cast().unwrap(),
+                color: [0., 1., 0., 1.],
+                rotation: [0., 0., 0.],
+            });
+            if self.draw_debug {
+                let op = if self.debug_transparent { 0.3 } else { 1. };
+                for c in &self.debug_cubes {
+                    mesh.append_instance(&Cube {
+                        center: c.cast().unwrap(),
+                        color: [0., 1., 0., op],
+                        rotation: [0., 0., 0.],
+                    })
+                }
+            }
+        }
 
         if !mesh.is_empty() {
             let index_buffer = self
@@ -447,6 +528,9 @@ impl Engine {
                         // the 'w' component will be `1`, which means enable `selected`
                         v.cast::<f32>().unwrap().to_homogeneous().into()
                     }),
+                    selected2: self.looking_at_cube_snapshot.map_or([0., 0., 0., 0.], |v| {
+                        v.0.cast::<f32>().unwrap().to_homogeneous().into()
+                    }),
                 })
                 .unwrap();
             let descriptor_set = self
@@ -468,7 +552,79 @@ impl Engine {
                     self.cubes_graphics_pipeline.layout().clone(),
                     0,
                     descriptor_set,
+                );
+
+            // draw debug rays
+            if let Some((cube, camera, direction)) = self.looking_at_cube_snapshot {
+                let vertices = [
+                    // the first arrow from the camera to the cube itself (center)
+                    Vertex {
+                        pos: camera.into(),
+                        normal: [0., 0., 0.],
+                    },
+                    Vertex {
+                        pos: (camera + (cube.cast::<f32>().unwrap() - camera) * 1000.).into(),
+                        normal: [0., 0., 0.],
+                    },
+                    Vertex {
+                        pos: (camera - Vector3::new(0.1, 0.1, 0.1)).into(),
+                        normal: [0., 0., 0.],
+                    },
+                    // the second arrow from the camera to the direction of the camera
+                    Vertex {
+                        pos: camera.into(),
+                        normal: [0., 0., 0.],
+                    },
+                    Vertex {
+                        pos: (camera + direction * 1000.).into(),
+                        normal: [0., 0., 0.],
+                    },
+                    Vertex {
+                        pos: (camera - Vector3::new(0.1, 0.1, 0.1)).into(),
+                        normal: [0., 0., 0.],
+                    },
+                ];
+                let vertex_buffer = CpuAccessibleBuffer::from_iter(
+                    self.queue.device().clone(),
+                    BufferUsage::vertex_buffer(),
+                    false,
+                    vertices.iter().cloned(),
                 )
+                .unwrap();
+
+                let instances = [
+                    // red
+                    Instance {
+                        color: [1., 0., 0., 1.],
+                        rotation: [0., 0., 0.],
+                        translation: [0., 0., 0.],
+                    },
+                    // blue
+                    Instance {
+                        color: [0., 0., 1., 1.],
+                        rotation: [0., 0., 0.],
+                        translation: [0., 0., 0.],
+                    },
+                ];
+
+                let instance_buffer = CpuAccessibleBuffer::from_iter(
+                    self.queue.device().clone(),
+                    BufferUsage::vertex_buffer(),
+                    false,
+                    instances.iter().cloned(),
+                )
+                .unwrap();
+
+                builder
+                    .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+                    .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone())
+                    .draw(3, 1, 0, 0)
+                    .unwrap()
+                    .draw(3, 1, 3, 1)
+                    .unwrap();
+            }
+
+            builder
                 .bind_index_buffer(index_buffer.clone())
                 .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
                 .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone())
