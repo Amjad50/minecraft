@@ -30,7 +30,7 @@ use winit::event::{
 use crate::{
     camera::Camera,
     object::{cube::Cube, Instance, InstancesMesh, Vertex},
-    world::World,
+    world::{CubeLookAt, World},
 };
 
 mod cubes_vs {
@@ -98,7 +98,7 @@ pub(crate) struct Engine {
     moving_direction: Vector3<f32>,
 
     camera: Camera,
-    looking_at_cube: Option<Point3<i32>>,
+    looking_at_cube: Option<CubeLookAt>,
     looking_at_cube_snapshot: Option<(Point3<i32>, Point3<f32>, Vector3<f32>)>,
     debug_cubes: Vec<Point3<i32>>,
     draw_debug: bool,
@@ -281,18 +281,17 @@ impl Engine {
             } => {
                 self.looking_at_cube_snapshot = None;
                 self.debug_cubes.clear();
-                if let Some(cube) = self.world.cube_looking_at(
+                let result = self.world.cube_looking_at(
                     self.camera.position(),
                     self.camera.direction(),
                     100.,
-                ) {
-                    self.looking_at_cube_snapshot = Some((
-                        *cube.last().unwrap(),
-                        *self.camera.position(),
-                        *self.camera.direction(),
-                    ));
+                );
+
+                if let Some(CubeLookAt { cube, .. }) = result.result_cube {
+                    self.looking_at_cube_snapshot =
+                        Some((cube, *self.camera.position(), *self.camera.direction()));
                     println!("dir: {:?}, looking at {:?}", self.camera.direction(), cube);
-                    self.debug_cubes = cube;
+                    self.debug_cubes = result.path;
                 }
             }
             Event::WindowEvent {
@@ -308,10 +307,12 @@ impl Engine {
                 if let Some((_, pos, dir)) = self.looking_at_cube_snapshot {
                     self.debug_cubes.clear();
                     let old_pos = pos;
-                    if let Some(cube) = self.world.cube_looking_at(&pos, &dir, 100.) {
-                        self.looking_at_cube_snapshot = Some((*cube.last().unwrap(), old_pos, dir));
+                    let result = self.world.cube_looking_at(&pos, &dir, 100.);
+
+                    if let Some(CubeLookAt { cube, .. }) = result.result_cube {
+                        self.looking_at_cube_snapshot = Some((cube, old_pos, dir));
                         println!("dir: {:?}, looking at {:?}", dir, cube);
-                        self.debug_cubes = cube;
+                        self.debug_cubes = result.path;
                     }
                 }
             }
@@ -380,6 +381,12 @@ impl Engine {
                         VirtualKeyCode::A => self.moving_direction.x = -1.,
                         VirtualKeyCode::Space => self.moving_direction.y = 1.,
                         VirtualKeyCode::LShift => self.moving_direction.y = -1.,
+                        VirtualKeyCode::P => {
+                            self.place_at_looking_at();
+                        }
+                        VirtualKeyCode::K => {
+                            self.remove_looking_at();
+                        }
                         _ => {}
                     }
                 } else {
@@ -420,13 +427,12 @@ impl Engine {
             },
         );
 
-        self.looking_at_cube = None;
-        if let Some(cube) =
-            self.world
-                .cube_looking_at(self.camera.position(), self.camera.direction(), LOOK_RADIUS)
-        {
-            self.looking_at_cube = Some(*cube.last().unwrap());
-        }
+        let result = self.world.cube_looking_at(
+            self.camera.position(),
+            self.camera.direction(),
+            LOOK_RADIUS,
+        );
+        self.looking_at_cube = result.result_cube;
     }
 
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
@@ -524,9 +530,9 @@ impl Engine {
                 .next(cubes_vs::ty::UniformData {
                     perspective: self.camera.reversed_depth_perspective().into(),
                     view: self.camera.view().into(),
-                    selected: self.looking_at_cube.map_or([0., 0., 0., 0.], |v| {
+                    selected: self.looking_at_cube.as_ref().map_or([0., 0., 0., 0.], |v| {
                         // the 'w' component will be `1`, which means enable `selected`
-                        v.cast::<f32>().unwrap().to_homogeneous().into()
+                        v.cube.cast::<f32>().unwrap().to_homogeneous().into()
                     }),
                     selected2: self.looking_at_cube_snapshot.map_or([0., 0., 0., 0.], |v| {
                         v.0.cast::<f32>().unwrap().to_homogeneous().into()
@@ -715,5 +721,27 @@ impl Engine {
                 0,
             )
             .unwrap();
+    }
+}
+
+impl Engine {
+    /// place a random block at the current looking block
+    fn place_at_looking_at(&mut self) {
+        if let Some(cube) = &self.looking_at_cube {
+            // we use the direction to know where the ray is coming from
+            let new_cube = cube.cube + cube.direction;
+
+            self.world.push_cube(Cube {
+                center: new_cube.cast().unwrap(),
+                color: [1., 0.5, 1.0, 1.],
+                rotation: [0., 0., 0.],
+            })
+        }
+    }
+
+    fn remove_looking_at(&mut self) {
+        if let Some(cube) = &self.looking_at_cube {
+            self.world.remove_cube(cube.cube);
+        }
     }
 }

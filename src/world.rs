@@ -201,14 +201,26 @@ impl Chunk {
 }
 
 // --- Looking at section ---
-
+#[derive(Debug)]
 enum TraceChunkResult {
     /// A block was found at the position
-    BlockFound(Point3<i32>),
+    BlockFound(Point3<i32>, Vector3<i32>),
     /// We should move to the next chunk
     ChunkChange((i32, i32)),
     /// Radius exceeded without finding a block, abort search...
     ExceededRadius,
+}
+
+#[derive(Debug)]
+pub struct CubeLookAt {
+    pub cube: Point3<i32>,
+    pub direction: Vector3<i32>,
+}
+
+#[derive(Debug)]
+pub struct TraceResult {
+    pub path: Vec<Point3<i32>>,
+    pub result_cube: Option<CubeLookAt>,
 }
 
 /// A helper struct that allows tracing all blocks passing through a ray
@@ -223,6 +235,7 @@ struct BlockRayTracer<'world> {
     current_chunk: (i32, i32),
     chunk_inc_dir: (i32, i32),
 
+    last_cube: Point3<i32>,
     current_cube: Point3<i32>,
     origin_cube_i32: Point3<i32>,
     cube_inc_dir: Vector3<i32>,
@@ -302,6 +315,7 @@ impl<'world> BlockRayTracer<'world> {
             current_chunk,
             chunk_inc_dir,
 
+            last_cube: current_cube,
             current_cube,
             origin_cube_i32,
             cube_inc_dir,
@@ -315,6 +329,8 @@ impl<'world> BlockRayTracer<'world> {
         const fn chunk_change(dir: i32, val: i32) -> bool {
             (dir == -1 && val.rem_euclid(16) == 15) || (dir == 1 && val.rem_euclid(16) == 0)
         }
+
+        self.last_cube = self.current_cube;
 
         if self.t_next_cube.x < self.t_next_cube.y {
             if self.t_next_cube.x < self.t_next_cube.z {
@@ -366,12 +382,17 @@ impl<'world> BlockRayTracer<'world> {
         loop {
             self.path.push(self.current_cube);
 
-            // can be unwraped, since current_cube must be in this chunk
-            // if we are still in the loop
-            let chunk_pos = chunk.in_chunk_pos(self.current_cube).unwrap();
-            let index = chunk_pos_to_index(chunk_pos);
-            if chunk.cubes[index].is_some() {
-                return TraceChunkResult::BlockFound(self.current_cube);
+            // This will almost always be some, unless we are outside the `y`
+            // range (0-255), then we should just follow the trace until we
+            // get back on range.
+            if let Some(chunk_pos) = chunk.in_chunk_pos(self.current_cube) {
+                let index = chunk_pos_to_index(chunk_pos);
+                if chunk.cubes[index].is_some() {
+                    return TraceChunkResult::BlockFound(
+                        self.current_cube,
+                        self.last_cube - self.current_cube,
+                    );
+                }
             }
 
             if let Some(r) = self.move_to_next_cube() {
@@ -392,8 +413,8 @@ impl<'world> BlockRayTracer<'world> {
         }
     }
 
-    pub fn run(mut self) -> Option<Vec<Point3<i32>>> {
-        loop {
+    pub fn run(mut self) -> TraceResult {
+        let result = loop {
             let result = if let Some(chunk) = self.world.chunks.get(&self.current_chunk) {
                 self.trace_chunk(chunk)
             } else {
@@ -401,17 +422,20 @@ impl<'world> BlockRayTracer<'world> {
             };
 
             match result {
-                TraceChunkResult::BlockFound(_cube) => {
-                    return Some(self.path);
+                TraceChunkResult::BlockFound(cube, direction) => {
+                    break Some(CubeLookAt { cube, direction })
                 }
                 TraceChunkResult::ChunkChange(next_chunk) => {
                     self.current_chunk = next_chunk;
                 }
-                TraceChunkResult::ExceededRadius => break,
+                TraceChunkResult::ExceededRadius => break None,
             }
-        }
+        };
 
-        None
+        TraceResult {
+            path: self.path,
+            result_cube: result,
+        }
     }
 }
 
@@ -538,7 +562,7 @@ impl World {
         origin: &Point3<f32>,
         direction: &Vector3<f32>,
         max_radius: f32,
-    ) -> Option<Vec<Point3<i32>>> {
+    ) -> TraceResult {
         let tracer = BlockRayTracer::new(self, origin, direction, max_radius);
 
         tracer.run()
