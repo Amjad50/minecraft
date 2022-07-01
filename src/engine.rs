@@ -29,7 +29,7 @@ use winit::event::{
 
 use crate::{
     camera::Camera,
-    object::{cube::Cube, Instance, InstancesMesh, Vertex},
+    object::{cube::Cube, Instance, InstancesMesh, Mesh, Vertex},
     world::{CubeLookAt, World},
 };
 
@@ -49,6 +49,13 @@ mod cubes_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
         path: "src/shaders/cubes.frag.glsl"
+    }
+}
+
+mod cubes_no_light_fs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        path: "src/shaders/cubes_no_light.frag.glsl"
     }
 }
 
@@ -77,6 +84,7 @@ pub(crate) struct Engine {
 
     render_pass: Arc<RenderPass>,
     cubes_graphics_pipeline: Arc<GraphicsPipeline>,
+    cubes_line_graphics_pipeline: Arc<GraphicsPipeline>,
     ui_graphics_pipeline: Arc<GraphicsPipeline>,
     uniform_buffer_pool: CpuBufferPool<cubes_vs::ty::UniformData>,
     descriptor_set_pool: SingleLayoutDescSetPool,
@@ -134,6 +142,7 @@ impl Engine {
 
         let vs_cubes = cubes_vs::load(queue.device().clone()).unwrap();
         let fs_cubes = cubes_fs::load(queue.device().clone()).unwrap();
+        let fs_cubes_no_light = cubes_no_light_fs::load(queue.device().clone()).unwrap();
 
         let vs_ui = ui_vs::load(queue.device().clone()).unwrap();
         let fs_ui = ui_fs::load(queue.device().clone()).unwrap();
@@ -160,6 +169,31 @@ impl Engine {
                 ..Default::default()
             })
             .color_blend_state(ColorBlendState::new(1).blend_alpha())
+            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+            .build(queue.device().clone())
+            .unwrap();
+
+        let cubes_line_graphics_pipeline = GraphicsPipeline::start()
+            .vertex_input_state(
+                BuffersDefinition::new()
+                    .vertex::<Vertex>()
+                    .instance::<Instance>(),
+            )
+            .input_assembly_state(InputAssemblyState {
+                topology: PartialStateMode::Fixed(PrimitiveTopology::LineList),
+                primitive_restart_enable: StateMode::Fixed(false),
+            })
+            .vertex_shader(vs_cubes.entry_point("main").unwrap(), ())
+            .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+            .fragment_shader(fs_cubes_no_light.entry_point("main").unwrap(), ())
+            .depth_stencil_state(DepthStencilState {
+                depth: Some(DepthState {
+                    enable_dynamic: false,
+                    compare_op: StateMode::Fixed(CompareOp::GreaterOrEqual), // inverse operation
+                    write_enable: StateMode::Fixed(false),
+                }),
+                ..Default::default()
+            })
             .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
             .build(queue.device().clone())
             .unwrap();
@@ -229,6 +263,7 @@ impl Engine {
             queue,
             render_pass,
             cubes_graphics_pipeline,
+            cubes_line_graphics_pipeline,
             ui_graphics_pipeline,
             uniform_buffer_pool,
             descriptor_set_pool,
@@ -530,11 +565,7 @@ impl Engine {
                 .next(cubes_vs::ty::UniformData {
                     perspective: self.camera.reversed_depth_perspective().into(),
                     view: self.camera.view().into(),
-                    selected: self.looking_at_cube.as_ref().map_or([0., 0., 0., 0.], |v| {
-                        // the 'w' component will be `1`, which means enable `selected`
-                        v.cube.cast::<f32>().unwrap().to_homogeneous().into()
-                    }),
-                    selected2: self.looking_at_cube_snapshot.map_or([0., 0., 0., 0.], |v| {
+                    selected: self.looking_at_cube_snapshot.map_or([0., 0., 0., 0.], |v| {
                         v.0.cast::<f32>().unwrap().to_homogeneous().into()
                     }),
                 })
@@ -642,6 +673,7 @@ impl Engine {
                 .unwrap();
         }
 
+        self.render_looking_at(&mut builder);
         self.render_ui(img_size, &mut builder);
 
         builder.end_render_pass().unwrap();
@@ -652,6 +684,57 @@ impl Engine {
             .then_execute(self.queue.clone(), command_buffer)
             .unwrap()
             .boxed()
+    }
+
+    fn render_looking_at(
+        &mut self,
+
+        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    ) {
+        if let Some(CubeLookAt { cube, .. }) = self.looking_at_cube {
+            let cube_vertices = Cube::mesh().0;
+            let indices = [
+                0, 1, // front t
+                1, 3, // front r
+                0, 2, // front l
+                2, 3, // front b
+                //
+                4, 5, // back t
+                5, 7, // back r
+                4, 6, // back l
+                6, 7, // back b
+                //
+                1, 5, // right t
+                3, 7, // right b
+                //
+                0, 4, // left t
+                2, 6, // left b
+            ];
+            let instances = [Instance {
+                color: [1., 1., 1., 1.],
+                translation: cube.cast::<f32>().unwrap().into(),
+                // scale a bit outward so that it doesn't collide with the block
+                // itself and draw glitched cube (because of depth collision)
+                scale: 1.012,
+                ..Default::default()
+            }];
+            let vertex_buffer = self.vertex_buffer_pool.chunk(cube_vertices).unwrap();
+            let instance_buffer = self.instance_buffer_pool.chunk(instances).unwrap();
+            let index_buffer = self.index_buffer_pool.chunk(indices).unwrap();
+
+            builder
+                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+                .bind_pipeline_graphics(self.cubes_line_graphics_pipeline.clone())
+                .bind_index_buffer(index_buffer.clone())
+                .draw_indexed(
+                    index_buffer.len() as u32,
+                    instance_buffer.len() as u32,
+                    0,
+                    0,
+                    0,
+                )
+                .unwrap();
+        }
     }
 
     fn render_ui(
