@@ -120,6 +120,7 @@ impl Mesh for Cube {
             translation: self.center.into(),
             color: self.color,
             rotation: self.rotation,
+            ..Default::default()
         }
     }
 }

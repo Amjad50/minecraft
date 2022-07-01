@@ -7,6 +7,7 @@ use crate::object::{cube::Cube, InstancesMesh};
 const Y_STRIDE: i32 = 16;
 const Z_STRIDE: i32 = 16 * 256;
 
+/// Helper function to convert an array index to a chunk position
 const fn index_to_chunk_pos(i: usize) -> Point3<i32> {
     Point3::new(
         (i % 16) as i32,
@@ -15,8 +16,14 @@ const fn index_to_chunk_pos(i: usize) -> Point3<i32> {
     )
 }
 
+/// Helper function to convert position inside a chunk to an array index
 const fn chunk_pos_to_index(chunk_pos: Point3<i32>) -> usize {
     (chunk_pos.x + chunk_pos.y * Y_STRIDE + chunk_pos.z * Z_STRIDE) as usize
+}
+
+/// Helper function to convert point to the chunk that contains it
+const fn chunk_id(pos: Point3<i32>) -> (i32, i32) {
+    (pos.x.div_euclid(16) * 16, pos.z.div_euclid(16) * 16)
 }
 
 #[derive(Clone, Copy)]
@@ -191,117 +198,244 @@ impl Chunk {
 
         cubes.into_iter()
     }
+}
 
-    pub fn cube_looking_at(
-        &self,
+// --- Looking at section ---
+#[derive(Debug)]
+enum TraceChunkResult {
+    /// A block was found at the position
+    BlockFound(Point3<i32>, Vector3<i32>),
+    /// We should move to the next chunk
+    ChunkChange((i32, i32)),
+    /// Radius exceeded without finding a block, abort search...
+    ExceededRadius,
+}
+
+#[derive(Debug)]
+pub struct CubeLookAt {
+    pub cube: Point3<i32>,
+    pub direction: Vector3<i32>,
+}
+
+#[derive(Debug)]
+pub struct TraceResult {
+    pub path: Vec<Point3<i32>>,
+    pub result_cube: Option<CubeLookAt>,
+}
+
+/// A helper struct that allows tracing all blocks passing through a ray
+/// from a position (possibly camera) and direction.
+///
+/// This goes through chunks as well
+struct BlockRayTracer<'world> {
+    world: &'world World,
+
+    dt: Vector3<f32>,
+
+    current_chunk: (i32, i32),
+    chunk_inc_dir: (i32, i32),
+
+    last_cube: Point3<i32>,
+    current_cube: Point3<i32>,
+    origin_cube_i32: Point3<i32>,
+    cube_inc_dir: Vector3<i32>,
+    t_next_cube: Vector3<f32>,
+
+    max_radius_i32: i32,
+    path: Vec<Point3<i32>>,
+}
+
+impl<'world> BlockRayTracer<'world> {
+    pub fn new(
+        world: &'world World,
         origin: &Point3<f32>,
         direction: &Vector3<f32>,
         max_radius: f32,
-    ) -> Option<Point3<i32>> {
-        let chunk_pos = self.in_relative_chunk_pos(origin.cast::<i32>().unwrap());
+    ) -> Self {
         let direction = direction.normalize();
 
-        let inside = chunk_pos.x >= 0
-            && chunk_pos.x < 16
-            && chunk_pos.y >= 0
-            && chunk_pos.y < 256
-            && chunk_pos.z >= 0
-            && chunk_pos.z < 16;
+        let origin_cube_i32 = origin.map(|a| a.round() as i32);
 
-        if inside {
-            return self.cube_looking_at_inside(&origin, &direction, max_radius);
-        }
+        let origin_chunk = chunk_id(origin_cube_i32);
 
-        None
-    }
-
-    // Reference: https://playtechs.blogspot.com/2007/03/raytracing-on-grid.html
-    /// `origin` must be inside the chunk, and that is guaranteed by the caller
-    fn cube_looking_at_inside(
-        &self,
-        origin: &Point3<f32>,
-        direction: &Vector3<f32>,
-        max_radius: f32,
-    ) -> Option<Point3<i32>> {
-        let origin_i32 = origin.map(|a| a.round() as i32);
         let max_radius_i32 = max_radius.ceil() as i32;
-        let mut current = origin_i32;
+        let current_chunk = origin_chunk;
+        let current_cube = origin_cube_i32;
 
         let dt_dx = 1. / direction.x.abs();
         let dt_dy = 1. / direction.y.abs();
         let dt_dz = 1. / direction.z.abs();
 
-        let mut t_next_x;
-        let mut t_next_y;
-        let mut t_next_z;
-        let inc_x = if direction.x == 0. {
-            t_next_x = std::f32::INFINITY;
-            0
-        } else if direction.x < 0. {
-            t_next_x = (origin.x + 0.5 - origin.x.round()) * dt_dx;
-            -1
-        } else {
-            t_next_x = (origin.x.round() + 0.5 - origin.x) * dt_dx;
-            1
-        };
-        let inc_y = if direction.y == 0. {
-            t_next_y = std::f32::INFINITY;
-            0
-        } else if direction.y < 0. {
-            t_next_y = (origin.y + 0.5 - origin.y.round()) * dt_dy;
-            -1
-        } else {
-            t_next_y = (origin.y.round() + 0.5 - origin.y) * dt_dy;
-            1
-        };
-        let inc_z = if direction.z == 0. {
-            t_next_z = std::f32::INFINITY;
-            0
-        } else if direction.z < 0. {
-            t_next_z = (origin.z + 0.5 - origin.z.round()) * dt_dz;
-            -1
-        } else {
-            t_next_z = (origin.z.round() + 0.5 - origin.z) * dt_dz;
-            1
+        let (cube_inc_dir, t_next_cube) = {
+            let t_next_x;
+            let t_next_y;
+            let t_next_z;
+            let inc_x = if direction.x == 0. {
+                t_next_x = std::f32::INFINITY;
+                0
+            } else if direction.x < 0. {
+                t_next_x = (origin.x + 0.5 - origin.x.round()) * dt_dx;
+                -1
+            } else {
+                t_next_x = (origin.x.round() + 0.5 - origin.x) * dt_dx;
+                1
+            };
+            let inc_y = if direction.y == 0. {
+                t_next_y = std::f32::INFINITY;
+                0
+            } else if direction.y < 0. {
+                t_next_y = (origin.y + 0.5 - origin.y.round()) * dt_dy;
+                -1
+            } else {
+                t_next_y = (origin.y.round() + 0.5 - origin.y) * dt_dy;
+                1
+            };
+            let inc_z = if direction.z == 0. {
+                t_next_z = std::f32::INFINITY;
+                0
+            } else if direction.z < 0. {
+                t_next_z = (origin.z + 0.5 - origin.z.round()) * dt_dz;
+                -1
+            } else {
+                t_next_z = (origin.z.round() + 0.5 - origin.z) * dt_dz;
+                1
+            };
+            (
+                Vector3::new(inc_x, inc_y, inc_z),
+                Vector3::new(t_next_x, t_next_y, t_next_z),
+            )
         };
 
-        let inc = Vector3::new(inc_x, inc_y, inc_z);
+        let chunk_inc_dir = (cube_inc_dir.x * 16, cube_inc_dir.z * 16);
 
-        loop {
-            if let Some(chunk_pos) = self.in_chunk_pos(current) {
-                let index = chunk_pos_to_index(chunk_pos);
-                if self.cubes[index].is_some() {
-                    return Some(current);
+        Self {
+            world,
+            dt: Vector3::new(dt_dx, dt_dy, dt_dz),
+
+            current_chunk,
+            chunk_inc_dir,
+
+            last_cube: current_cube,
+            current_cube,
+            origin_cube_i32,
+            cube_inc_dir,
+            t_next_cube,
+            max_radius_i32,
+            path: Vec::new(),
+        }
+    }
+
+    fn move_to_next_cube(&mut self) -> Option<TraceChunkResult> {
+        const fn chunk_change(dir: i32, val: i32) -> bool {
+            (dir == -1 && val.rem_euclid(16) == 15) || (dir == 1 && val.rem_euclid(16) == 0)
+        }
+
+        self.last_cube = self.current_cube;
+
+        if self.t_next_cube.x < self.t_next_cube.y {
+            if self.t_next_cube.x < self.t_next_cube.z {
+                self.current_cube.x += self.cube_inc_dir.x;
+                self.t_next_cube.x += self.dt.x;
+                if chunk_change(self.cube_inc_dir.x, self.current_cube.x) {
+                    return Some(TraceChunkResult::ChunkChange((
+                        self.current_chunk.0 + self.chunk_inc_dir.0,
+                        self.current_chunk.1,
+                    )));
                 }
             } else {
-                break;
-            }
-
-            if t_next_x < t_next_y {
-                if t_next_x < t_next_z {
-                    current.x += inc.x;
-                    t_next_x += dt_dx;
-                } else {
-                    current.z += inc.z;
-                    t_next_z += dt_dz;
+                self.current_cube.z += self.cube_inc_dir.z;
+                self.t_next_cube.z += self.dt.z;
+                if chunk_change(self.cube_inc_dir.z, self.current_cube.z) {
+                    return Some(TraceChunkResult::ChunkChange((
+                        self.current_chunk.0,
+                        self.current_chunk.1 + self.chunk_inc_dir.1,
+                    )));
                 }
+            }
+        } else {
+            if self.t_next_cube.y < self.t_next_cube.z {
+                self.current_cube.y += self.cube_inc_dir.y;
+                self.t_next_cube.y += self.dt.y;
             } else {
-                if t_next_y < t_next_z {
-                    current.y += inc.y;
-                    t_next_y += dt_dy;
-                } else {
-                    current.z += inc.z;
-                    t_next_z += dt_dz;
+                self.current_cube.z += self.cube_inc_dir.z;
+                self.t_next_cube.z += self.dt.z;
+                if chunk_change(self.cube_inc_dir.z, self.current_cube.z) {
+                    return Some(TraceChunkResult::ChunkChange((
+                        self.current_chunk.0,
+                        self.current_chunk.1 + self.chunk_inc_dir.1,
+                    )));
                 }
-            }
-
-            let distance = (current - origin_i32).magnitude2(); // squared distance
-            if distance > max_radius_i32 * max_radius_i32 {
-                return None;
             }
         }
 
-        None
+        let distance = (self.current_cube - self.origin_cube_i32).magnitude2(); // squared distance
+
+        if distance > self.max_radius_i32 * self.max_radius_i32 {
+            Some(TraceChunkResult::ExceededRadius)
+        } else {
+            None
+        }
+    }
+
+    // Reference: https://playtechs.blogspot.com/2007/03/raytracing-on-grid.html
+    fn trace_chunk(&mut self, chunk: &Chunk) -> TraceChunkResult {
+        loop {
+            self.path.push(self.current_cube);
+
+            // This will almost always be some, unless we are outside the `y`
+            // range (0-255), then we should just follow the trace until we
+            // get back on range.
+            if let Some(chunk_pos) = chunk.in_chunk_pos(self.current_cube) {
+                let index = chunk_pos_to_index(chunk_pos);
+                if chunk.cubes[index].is_some() {
+                    return TraceChunkResult::BlockFound(
+                        self.current_cube,
+                        self.last_cube - self.current_cube,
+                    );
+                }
+            }
+
+            if let Some(r) = self.move_to_next_cube() {
+                return r;
+            }
+        }
+    }
+
+    fn trace_no_chunk(&mut self) -> TraceChunkResult {
+        // TODO: maybe we can optimize this since we don't need
+        //       to loop over all cubes
+        loop {
+            self.path.push(self.current_cube);
+
+            if let Some(r) = self.move_to_next_cube() {
+                return r;
+            }
+        }
+    }
+
+    pub fn run(mut self) -> TraceResult {
+        let result = loop {
+            let result = if let Some(chunk) = self.world.chunks.get(&self.current_chunk) {
+                self.trace_chunk(chunk)
+            } else {
+                self.trace_no_chunk()
+            };
+
+            match result {
+                TraceChunkResult::BlockFound(cube, direction) => {
+                    break Some(CubeLookAt { cube, direction })
+                }
+                TraceChunkResult::ChunkChange(next_chunk) => {
+                    self.current_chunk = next_chunk;
+                }
+                TraceChunkResult::ExceededRadius => break None,
+            }
+        };
+
+        TraceResult {
+            path: self.path,
+            result_cube: result,
+        }
     }
 }
 
@@ -325,10 +459,7 @@ impl Default for World {
 impl World {
     #[allow(dead_code)]
     pub fn push_cube(&mut self, block: Cube) {
-        let chunk_id = (
-            (block.center.x as i32) / 16 * 16,
-            (block.center.z as i32) / 16 * 16,
-        );
+        let chunk_id = chunk_id(block.center.cast().unwrap());
         self.chunks
             .entry(chunk_id)
             .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone()))
@@ -338,7 +469,7 @@ impl World {
     #[allow(dead_code)]
     pub fn remove_cube(&mut self, pos: Point3<i32>) {
         assert!(pos.y >= 0);
-        let chunk_id = ((pos.x as i32) / 16 * 16, (pos.z as i32) / 16 * 16);
+        let chunk_id = chunk_id(pos.cast().unwrap());
         let chunk = self
             .chunks
             .entry(chunk_id)
@@ -348,11 +479,11 @@ impl World {
     }
 
     pub fn create_chunk(&mut self, x: i32, y: u32, z: i32, color: [f32; 4]) {
-        let start_x = (x / 16) * 16;
+        let chunk_id = chunk_id(Point3::new(x, 0, z));
+        let start_x = chunk_id.0;
         let start_y = y;
-        let start_z = (z / 16) * 16;
+        let start_z = chunk_id.1;
 
-        let chunk_id = (start_x, start_z);
         let mut chunk = Chunk::new(chunk_id.into(), self.dirty.clone());
 
         for x in start_x..(start_x + 16) {
@@ -382,7 +513,7 @@ impl World {
     pub fn chunks_around(&self, pos: Point2<i32>, radius: f32) -> impl Iterator<Item = &Chunk> {
         let mut chunks = Vec::new();
 
-        let chunk_containing_pos = (pos.x / 16 * 16, pos.y / 16 * 16);
+        let chunk_containing_pos = chunk_id(Point3::new(pos.x, 0, pos.y));
 
         let radius_chunks = (radius / 16.).ceil() as i32;
 
@@ -410,7 +541,7 @@ impl World {
         radius: f32,
         f: impl Fn(&mut Chunk),
     ) {
-        let chunk_containing_pos = (pos.x / 16 * 16, pos.y / 16 * 16);
+        let chunk_containing_pos = chunk_id(Point3::new(pos.x, 0, pos.y));
         let radius_chunks = (radius / 16.).ceil() as i32;
 
         for x in -radius_chunks..=radius_chunks {
@@ -431,20 +562,10 @@ impl World {
         origin: &Point3<f32>,
         direction: &Vector3<f32>,
         max_radius: f32,
-    ) -> Option<Point3<i32>> {
-        let chunk_containing_origin = (
-            (origin.x.round() as i32) / 16 * 16,
-            (origin.z.round() as i32) / 16 * 16,
-        );
+    ) -> TraceResult {
+        let tracer = BlockRayTracer::new(self, origin, direction, max_radius);
 
-        // check current chunk
-        if let Some(chunk) = self.chunks.get(&chunk_containing_origin) {
-            if let Some(cube) = chunk.cube_looking_at(origin, direction, max_radius) {
-                return Some(cube);
-            }
-        }
-
-        None
+        tracer.run()
     }
 }
 

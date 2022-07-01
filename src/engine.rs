@@ -1,6 +1,6 @@
 use std::{f32::consts::PI, sync::Arc, time::Duration};
 
-use cgmath::{Deg, Point2, Point3, Vector3};
+use cgmath::{Deg, Point2, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
@@ -12,6 +12,7 @@ use vulkano::{
     image::{view::ImageView, AttachmentImage, ImageAccess},
     pipeline::{
         graphics::{
+            color_blend::ColorBlendState,
             depth_stencil::{CompareOp, DepthState, DepthStencilState},
             input_assembly::{InputAssemblyState, PrimitiveTopology},
             vertex_input::BuffersDefinition,
@@ -28,8 +29,8 @@ use winit::event::{
 
 use crate::{
     camera::Camera,
-    object::{Instance, Vertex},
-    world::World,
+    object::{cube::Cube, Instance, Mesh, Vertex},
+    world::{CubeLookAt, World},
 };
 
 mod cubes_vs {
@@ -48,6 +49,13 @@ mod cubes_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
         path: "src/shaders/cubes.frag.glsl"
+    }
+}
+
+mod cubes_no_light_fs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        path: "src/shaders/cubes_no_light.frag.glsl"
     }
 }
 
@@ -76,6 +84,7 @@ pub(crate) struct Engine {
 
     render_pass: Arc<RenderPass>,
     cubes_graphics_pipeline: Arc<GraphicsPipeline>,
+    cubes_line_graphics_pipeline: Arc<GraphicsPipeline>,
     ui_graphics_pipeline: Arc<GraphicsPipeline>,
     uniform_buffer_pool: CpuBufferPool<cubes_vs::ty::UniformData>,
     descriptor_set_pool: SingleLayoutDescSetPool,
@@ -97,7 +106,7 @@ pub(crate) struct Engine {
     moving_direction: Vector3<f32>,
 
     camera: Camera,
-    looking_at_cube: Option<Point3<i32>>,
+    looking_at_cube: Option<CubeLookAt>,
 }
 
 impl Engine {
@@ -129,6 +138,7 @@ impl Engine {
 
         let vs_cubes = cubes_vs::load(queue.device().clone()).unwrap();
         let fs_cubes = cubes_fs::load(queue.device().clone()).unwrap();
+        let fs_cubes_no_light = cubes_no_light_fs::load(queue.device().clone()).unwrap();
 
         let vs_ui = ui_vs::load(queue.device().clone()).unwrap();
         let fs_ui = ui_fs::load(queue.device().clone()).unwrap();
@@ -151,6 +161,32 @@ impl Engine {
                     enable_dynamic: false,
                     compare_op: StateMode::Fixed(CompareOp::Greater), // inverse operation
                     write_enable: StateMode::Fixed(true),
+                }),
+                ..Default::default()
+            })
+            .color_blend_state(ColorBlendState::new(1).blend_alpha())
+            .render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+            .build(queue.device().clone())
+            .unwrap();
+
+        let cubes_line_graphics_pipeline = GraphicsPipeline::start()
+            .vertex_input_state(
+                BuffersDefinition::new()
+                    .vertex::<Vertex>()
+                    .instance::<Instance>(),
+            )
+            .input_assembly_state(InputAssemblyState {
+                topology: PartialStateMode::Fixed(PrimitiveTopology::LineList),
+                primitive_restart_enable: StateMode::Fixed(false),
+            })
+            .vertex_shader(vs_cubes.entry_point("main").unwrap(), ())
+            .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+            .fragment_shader(fs_cubes_no_light.entry_point("main").unwrap(), ())
+            .depth_stencil_state(DepthStencilState {
+                depth: Some(DepthState {
+                    enable_dynamic: false,
+                    compare_op: StateMode::Fixed(CompareOp::GreaterOrEqual), // inverse operation
+                    write_enable: StateMode::Fixed(false),
                 }),
                 ..Default::default()
             })
@@ -223,6 +259,7 @@ impl Engine {
             queue,
             render_pass,
             cubes_graphics_pipeline,
+            cubes_line_graphics_pipeline,
             ui_graphics_pipeline,
             uniform_buffer_pool,
             descriptor_set_pool,
@@ -259,6 +296,23 @@ impl Engine {
                 ElementState::Released => {
                     self.holding_cursor = false;
                 }
+            },
+            Event::WindowEvent {
+                event:
+                    WindowEvent::MouseInput {
+                        button,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => match button {
+                MouseButton::Left => {
+                    self.remove_looking_at();
+                }
+                MouseButton::Middle => {
+                    self.place_at_looking_at();
+                }
+                _ => unreachable!(),
             },
             Event::WindowEvent {
                 event: WindowEvent::CursorMoved { position, .. },
@@ -357,13 +411,12 @@ impl Engine {
             },
         );
 
-        self.looking_at_cube = None;
-        if let Some(cube) =
-            self.world
-                .cube_looking_at(self.camera.position(), self.camera.direction(), LOOK_RADIUS)
-        {
-            self.looking_at_cube = Some(cube);
-        }
+        let result = self.world.cube_looking_at(
+            self.camera.position(),
+            self.camera.direction(),
+            LOOK_RADIUS,
+        );
+        self.looking_at_cube = result.result_cube;
     }
 
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
@@ -443,10 +496,6 @@ impl Engine {
                 .next(cubes_vs::ty::UniformData {
                     perspective: self.camera.reversed_depth_perspective().into(),
                     view: self.camera.view().into(),
-                    selected: self.looking_at_cube.map_or([0., 0., 0., 0.], |v| {
-                        // the 'w' component will be `1`, which means enable `selected`
-                        v.cast::<f32>().unwrap().to_homogeneous().into()
-                    }),
                 })
                 .unwrap();
             let descriptor_set = self
@@ -468,7 +517,9 @@ impl Engine {
                     self.cubes_graphics_pipeline.layout().clone(),
                     0,
                     descriptor_set,
-                )
+                );
+
+            builder
                 .bind_index_buffer(index_buffer.clone())
                 .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
                 .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone())
@@ -482,6 +533,7 @@ impl Engine {
                 .unwrap();
         }
 
+        self.render_looking_at(&mut builder);
         self.render_ui(img_size, &mut builder);
 
         builder.end_render_pass().unwrap();
@@ -492,6 +544,57 @@ impl Engine {
             .then_execute(self.queue.clone(), command_buffer)
             .unwrap()
             .boxed()
+    }
+
+    fn render_looking_at(
+        &mut self,
+
+        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    ) {
+        if let Some(CubeLookAt { cube, .. }) = self.looking_at_cube {
+            let cube_vertices = Cube::mesh().0;
+            let indices = [
+                0, 1, // front t
+                1, 3, // front r
+                0, 2, // front l
+                2, 3, // front b
+                //
+                4, 5, // back t
+                5, 7, // back r
+                4, 6, // back l
+                6, 7, // back b
+                //
+                1, 5, // right t
+                3, 7, // right b
+                //
+                0, 4, // left t
+                2, 6, // left b
+            ];
+            let instances = [Instance {
+                color: [1., 1., 1., 1.],
+                translation: cube.cast::<f32>().unwrap().into(),
+                // scale a bit outward so that it doesn't collide with the block
+                // itself and draw glitched cube (because of depth collision)
+                scale: 1.012,
+                ..Default::default()
+            }];
+            let vertex_buffer = self.vertex_buffer_pool.chunk(cube_vertices).unwrap();
+            let instance_buffer = self.instance_buffer_pool.chunk(instances).unwrap();
+            let index_buffer = self.index_buffer_pool.chunk(indices).unwrap();
+
+            builder
+                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+                .bind_pipeline_graphics(self.cubes_line_graphics_pipeline.clone())
+                .bind_index_buffer(index_buffer.clone())
+                .draw_indexed(
+                    index_buffer.len() as u32,
+                    instance_buffer.len() as u32,
+                    0,
+                    0,
+                    0,
+                )
+                .unwrap();
+        }
     }
 
     fn render_ui(
@@ -523,14 +626,15 @@ impl Engine {
             // vertical
             Instance {
                 color: [1., 1., 1., 1.],
-                rotation: [0., 0., 0.],
                 translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+                ..Default::default()
             },
             // horizontal (rotated)
             Instance {
                 color: [1., 1., 1., 1.],
                 rotation: [0., 0., PI / 2.],
                 translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+                ..Default::default()
             },
         ];
 
@@ -559,5 +663,27 @@ impl Engine {
                 0,
             )
             .unwrap();
+    }
+}
+
+impl Engine {
+    /// place a random block at the current looking block
+    fn place_at_looking_at(&mut self) {
+        if let Some(cube) = &self.looking_at_cube {
+            // we use the direction to know where the ray is coming from
+            let new_cube = cube.cube + cube.direction;
+
+            self.world.push_cube(Cube {
+                center: new_cube.cast().unwrap(),
+                color: [1., 0.5, 1.0, 1.],
+                rotation: [0., 0., 0.],
+            })
+        }
+    }
+
+    fn remove_looking_at(&mut self) {
+        if let Some(cube) = &self.looking_at_cube {
+            self.world.remove_cube(cube.cube);
+        }
     }
 }
