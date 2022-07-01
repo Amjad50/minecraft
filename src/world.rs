@@ -352,19 +352,17 @@ impl<'world> BlockRayTracer<'world> {
                     )));
                 }
             }
+        } else if self.t_next_cube.y < self.t_next_cube.z {
+            self.current_cube.y += self.cube_inc_dir.y;
+            self.t_next_cube.y += self.dt.y;
         } else {
-            if self.t_next_cube.y < self.t_next_cube.z {
-                self.current_cube.y += self.cube_inc_dir.y;
-                self.t_next_cube.y += self.dt.y;
-            } else {
-                self.current_cube.z += self.cube_inc_dir.z;
-                self.t_next_cube.z += self.dt.z;
-                if chunk_change(self.cube_inc_dir.z, self.current_cube.z) {
-                    return Some(TraceChunkResult::ChunkChange((
-                        self.current_chunk.0,
-                        self.current_chunk.1 + self.chunk_inc_dir.1,
-                    )));
-                }
+            self.current_cube.z += self.cube_inc_dir.z;
+            self.t_next_cube.z += self.dt.z;
+            if chunk_change(self.cube_inc_dir.z, self.current_cube.z) {
+                return Some(TraceChunkResult::ChunkChange((
+                    self.current_chunk.0,
+                    self.current_chunk.1 + self.chunk_inc_dir.1,
+                )));
             }
         }
 
