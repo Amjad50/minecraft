@@ -46,6 +46,7 @@ impl Mesh for Square {
             translation: self.center.into(),
             color: self.color,
             rotation: self.rotation,
+            ..Default::default()
         }
     }
 }

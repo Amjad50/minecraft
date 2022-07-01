@@ -17,13 +17,26 @@ pub struct Vertex {
 impl_vertex!(Vertex, pos, normal);
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Default)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 pub struct Instance {
     pub color: [f32; 4],
     pub rotation: [f32; 3],
     pub translation: [f32; 3],
+    pub scale: f32,
 }
-impl_vertex!(Instance, color, rotation, translation);
+
+impl Default for Instance {
+    fn default() -> Self {
+        Self {
+            color: [0.; 4],
+            rotation: [0.; 3],
+            translation: [0.; 3],
+            scale: 1.,
+        }
+    }
+}
+
+impl_vertex!(Instance, color, rotation, translation, scale);
 
 #[derive(Debug)]
 pub enum InstancesMeshError {

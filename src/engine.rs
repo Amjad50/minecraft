@@ -602,14 +602,12 @@ impl Engine {
                     // red
                     Instance {
                         color: [1., 0., 0., 1.],
-                        rotation: [0., 0., 0.],
-                        translation: [0., 0., 0.],
+                        ..Default::default()
                     },
                     // blue
                     Instance {
                         color: [0., 0., 1., 1.],
-                        rotation: [0., 0., 0.],
-                        translation: [0., 0., 0.],
+                        ..Default::default()
                     },
                 ];
 
@@ -685,14 +683,15 @@ impl Engine {
             // vertical
             Instance {
                 color: [1., 1., 1., 1.],
-                rotation: [0., 0., 0.],
                 translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+                ..Default::default()
             },
             // horizontal (rotated)
             Instance {
                 color: [1., 1., 1., 1.],
                 rotation: [0., 0., PI / 2.],
                 translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+                ..Default::default()
             },
         ];
 

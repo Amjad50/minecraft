@@ -5,6 +5,7 @@ layout(location = 1) in vec3 normal;
 layout(location = 2) in vec4 color;
 layout(location = 3) in vec3 rotation;
 layout(location = 4) in vec3 translation;
+layout(location = 5) in float scale;
 
 layout(location = 0) out vec4 v_color;
 
@@ -23,9 +24,9 @@ void main() {
 
     // https://en.wikipedia.org/wiki/Euler_angles#Rotation_matrix
     mat4 object_transform = mat4(
-        c2 * c3, c1 * s3 + c3 * s1 * s2, s1 * s3 - c1 * c3 * s2, 0,
-        -c2 * s3, c1 * c3 - s1 * s2 * s3, c3 * s1 + c1 * s2 * s3, 0,
-        s2, -c2 * s1, c1 * c2, 0,
+        (c2 * c3) * scale, (c1 * s3 + c3 * s1 * s2), (s1 * s3 - c1 * c3 * s2), 0,
+        (-c2 * s3), (c1 * c3 - s1 * s2 * s3) * scale, (c3 * s1 + c1 * s2 * s3), 0,
+        (s2), (-c2 * s1), (c1 * c2) * scale, 0,
         translation, 1
     );
     vec2 p = vec2((object_transform * vec4(pos, 1)));
