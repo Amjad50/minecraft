@@ -33,6 +33,7 @@ use crate::{
     world::{CubeLookAt, World},
 };
 
+#[allow(clippy::needless_question_mark)]
 mod cubes_vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -45,6 +46,7 @@ mod cubes_vs {
     }
 }
 
+#[allow(clippy::needless_question_mark)]
 mod cubes_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
@@ -52,6 +54,7 @@ mod cubes_fs {
     }
 }
 
+#[allow(clippy::needless_question_mark)]
 mod cubes_no_light_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
@@ -59,6 +62,7 @@ mod cubes_no_light_fs {
     }
 }
 
+#[allow(clippy::needless_question_mark)]
 mod ui_vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -71,6 +75,7 @@ mod ui_vs {
     }
 }
 
+#[allow(clippy::needless_question_mark)]
 mod ui_fs {
     vulkano_shaders::shader! {
         ty: "fragment",
@@ -583,7 +588,7 @@ impl Engine {
             let index_buffer = self.index_buffer_pool.chunk(indices).unwrap();
 
             builder
-                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+                .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
                 .bind_pipeline_graphics(self.cubes_line_graphics_pipeline.clone())
                 .bind_index_buffer(index_buffer.clone())
                 .draw_indexed(
