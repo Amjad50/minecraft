@@ -29,7 +29,7 @@ use winit::event::{
 
 use crate::{
     camera::Camera,
-    object::{cube::Cube, Instance, Mesh, Vertex},
+    object::{cube::Cube, Instance, InstancesMesh, Mesh, Vertex},
     world::{CubeLookAt, World},
 };
 
@@ -475,59 +475,59 @@ impl Engine {
             )
             .unwrap();
 
-        let mesh = self.world.mesh();
+        self.camera
+            .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
 
-        if !mesh.is_empty() {
-            let index_buffer = self
-                .index_buffer_pool
-                .chunk(mesh.indices().iter().cloned())
-                .unwrap();
+        let uniform_subbuffer = self
+            .uniform_buffer_pool
+            .next(cubes_vs::ty::UniformData {
+                perspective: self.camera.reversed_depth_perspective().into(),
+                view: self.camera.view().into(),
+            })
+            .unwrap();
 
-            let vertex_buffer = self
-                .vertex_buffer_pool
-                .chunk(mesh.vertices().iter().cloned())
-                .unwrap();
+        let descriptor_set = self
+            .descriptor_set_pool
+            .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
+            .unwrap();
 
+        builder
+            .set_viewport(
+                0,
+                [Viewport {
+                    origin: [0.0, 0.0],
+                    dimensions: self.viewport_size,
+                    depth_range: 0.0..1.0,
+                }],
+            )
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.cubes_graphics_pipeline.layout().clone(),
+                0,
+                descriptor_set,
+            )
+            .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone());
+
+        // create them once
+        let empty_cube_mesh = InstancesMesh::<Cube>::new().unwrap();
+        let index_buffer = self
+            .index_buffer_pool
+            .chunk(empty_cube_mesh.indices().iter().cloned())
+            .unwrap();
+        let vertex_buffer = self
+            .vertex_buffer_pool
+            .chunk(empty_cube_mesh.vertices().iter().cloned())
+            .unwrap();
+
+        let mut render_mesh = |mesh: &InstancesMesh<Cube>| {
             let instance_buffer = self
                 .instance_buffer_pool
                 .chunk(mesh.instances().iter().cloned())
                 .unwrap();
 
-            self.camera
-                .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
-
-            let uniform_subbuffer = self
-                .uniform_buffer_pool
-                .next(cubes_vs::ty::UniformData {
-                    perspective: self.camera.reversed_depth_perspective().into(),
-                    view: self.camera.view().into(),
-                })
-                .unwrap();
-            let descriptor_set = self
-                .descriptor_set_pool
-                .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
-                .unwrap();
-
             builder
-                .set_viewport(
-                    0,
-                    [Viewport {
-                        origin: [0.0, 0.0],
-                        dimensions: self.viewport_size,
-                        depth_range: 0.0..1.0,
-                    }],
-                )
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    self.cubes_graphics_pipeline.layout().clone(),
-                    0,
-                    descriptor_set,
-                );
-
-            builder
+                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
                 .bind_index_buffer(index_buffer.clone())
-                .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
-                .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone())
                 .draw_indexed(
                     index_buffer.len() as u32,
                     instance_buffer.len() as u32,
@@ -536,6 +536,11 @@ impl Engine {
                     0,
                 )
                 .unwrap();
+        };
+
+        for chunk in self.world.all_chunks_mut() {
+            let mesh = chunk.mesh();
+            render_mesh(mesh);
         }
 
         self.render_looking_at(&mut builder);

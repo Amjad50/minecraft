@@ -99,6 +99,7 @@ impl<M: Mesh> InstancesMesh<M> {
         &self.instances
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.indices.is_empty() || self.instances.is_empty()
     }
@@ -107,6 +108,7 @@ impl<M: Mesh> InstancesMesh<M> {
         self.instances.push(instance.to_instance());
     }
 
+    #[allow(dead_code)]
     pub fn extend_mesh(&mut self, mesh: &Self) {
         self.instances.extend_from_slice(&mesh.instances);
     }

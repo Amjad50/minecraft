@@ -106,7 +106,7 @@ impl Chunk {
         self.world_dirty_ref.set(true);
     }
 
-    fn add_to_mesh(&mut self, mesh: &mut InstancesMesh<Cube>) {
+    pub fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty {
             self.mesh = InstancesMesh::new().unwrap();
             self.dirty = false;
@@ -142,7 +142,7 @@ impl Chunk {
             }
         }
 
-        mesh.extend_mesh(&self.mesh);
+        &self.mesh
     }
 
     #[allow(dead_code)]
@@ -530,6 +530,15 @@ impl World {
         chunks.into_iter()
     }
 
+    #[allow(dead_code)]
+    pub fn all_chunks(&self) -> impl Iterator<Item = &Chunk> {
+        self.chunks.values()
+    }
+
+    pub fn all_chunks_mut(&mut self) -> impl Iterator<Item = &mut Chunk> {
+        self.chunks.values_mut()
+    }
+
     /// Since we can't create a mut iterator easily because of lifetimes errors,
     /// we used callback function to mutate chunks if needed.
     #[allow(dead_code)]
@@ -537,7 +546,7 @@ impl World {
         &mut self,
         pos: Point2<i32>,
         radius: f32,
-        f: impl Fn(&mut Chunk),
+        mut f: impl FnMut(&mut Chunk),
     ) {
         let chunk_containing_pos = chunk_id(Point3::new(pos.x, 0, pos.y));
         let radius_chunks = (radius / 16.).ceil() as i32;
@@ -568,12 +577,13 @@ impl World {
 }
 
 impl World {
-    pub(crate) fn mesh(&mut self) -> &InstancesMesh<Cube> {
+    #[allow(dead_code)]
+    pub fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty.get() {
             self.mesh = InstancesMesh::new().unwrap();
 
             for chunk in self.chunks.values_mut() {
-                chunk.add_to_mesh(&mut self.mesh);
+                self.mesh.extend_mesh(chunk.mesh());
             }
             self.dirty.set(false);
         }
