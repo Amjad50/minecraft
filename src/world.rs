@@ -29,7 +29,6 @@ const fn chunk_id(pos: Point3<i32>) -> (i32, i32) {
 #[derive(Clone, Copy)]
 pub(crate) struct ChunkCube {
     color: [f32; 4],
-    rotation: [f32; 3],
 }
 
 pub(crate) struct Chunk {
@@ -86,10 +85,7 @@ impl Chunk {
 
         let index = chunk_pos_to_index(chunk_position);
 
-        self.cubes[index] = Some(ChunkCube {
-            color: cube.color,
-            rotation: cube.rotation,
-        });
+        self.cubes[index] = Some(ChunkCube { color: cube.color });
 
         self.dirty = true;
         self.world_dirty_ref.set(true);
@@ -135,7 +131,6 @@ impl Chunk {
                         self.mesh.append_instance(&Cube {
                             center: pos.cast().unwrap(),
                             color: cube.color,
-                            rotation: cube.rotation,
                         });
                     }
                 }
@@ -490,7 +485,6 @@ impl World {
                     chunk.push_cube(Cube {
                         center: Point3::new(x, y as i32, z).cast().unwrap(),
                         color,
-                        rotation: [0.0, 0.0, 0.0],
                     });
                 }
             }

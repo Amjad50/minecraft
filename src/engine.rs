@@ -483,6 +483,8 @@ impl Engine {
             .next(cubes_vs::ty::UniformData {
                 perspective: self.camera.reversed_depth_perspective().into(),
                 view: self.camera.view().into(),
+                rotation: [0., 0., 0.],
+                scale: 1.,
             })
             .unwrap();
 
@@ -583,16 +585,34 @@ impl Engine {
             let instances = [Instance {
                 color: [1., 1., 1., 1.],
                 translation: cube.cast::<f32>().unwrap().into(),
-                // scale a bit outward so that it doesn't collide with the block
-                // itself and draw glitched cube (because of depth collision)
-                scale: 1.012,
-                ..Default::default()
             }];
             let vertex_buffer = self.vertex_buffer_pool.chunk(cube_vertices).unwrap();
             let instance_buffer = self.instance_buffer_pool.chunk(instances).unwrap();
             let index_buffer = self.index_buffer_pool.chunk(indices).unwrap();
 
+            let uniform_subbuffer = self
+                .uniform_buffer_pool
+                .next(cubes_vs::ty::UniformData {
+                    rotation: [0., 0., 0.],
+                    // scale a bit outward so that it doesn't collide with the block
+                    // itself and draw glitched cube (because of depth collision)
+                    scale: 1.012,
+                    perspective: self.camera.reversed_depth_perspective().into(),
+                    view: self.camera.view().into(),
+                })
+                .unwrap();
+            let descriptor_set = self
+                .descriptor_set_pool
+                .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
+                .unwrap();
+
             builder
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    self.cubes_line_graphics_pipeline.layout().clone(),
+                    0,
+                    descriptor_set,
+                )
                 .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
                 .bind_pipeline_graphics(self.cubes_line_graphics_pipeline.clone())
                 .bind_index_buffer(index_buffer.clone())
@@ -612,7 +632,7 @@ impl Engine {
         img_size: [u32; 2],
         builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) {
-        // create a cross of 20 pixels in size
+        // create a line for the cross cross of 20 pixels in size
         let vertices = [
             Vertex {
                 pos: [0., 10., 0.],
@@ -632,22 +652,10 @@ impl Engine {
         )
         .unwrap();
 
-        let instances = [
-            // vertical
-            Instance {
-                color: [1., 1., 1., 1.],
-                translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
-                ..Default::default()
-            },
-            // horizontal (rotated)
-            Instance {
-                color: [1., 1., 1., 1.],
-                rotation: [0., 0., PI / 2.],
-                translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
-                ..Default::default()
-            },
-        ];
-
+        let instances = [Instance {
+            color: [1., 1., 1., 1.],
+            translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+        }];
         let instance_buffer = CpuAccessibleBuffer::from_iter(
             self.queue.device().clone(),
             BufferUsage::vertex_buffer(),
@@ -656,23 +664,30 @@ impl Engine {
         )
         .unwrap();
 
-        builder
-            .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
-            .bind_pipeline_graphics(self.ui_graphics_pipeline.clone())
-            .push_constants(
-                self.ui_graphics_pipeline.layout().clone(),
-                0,
-                ui_vs::ty::PushConstants {
-                    display_size: img_size,
-                },
-            )
-            .draw(
-                vertex_buffer.len() as u32,
-                instance_buffer.len() as u32,
-                0,
-                0,
-            )
-            .unwrap();
+        builder.bind_pipeline_graphics(self.ui_graphics_pipeline.clone());
+
+        // draw the line two times
+        for r in [0., PI / 2.] {
+            builder
+                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+                .push_constants(
+                    self.ui_graphics_pipeline.layout().clone(),
+                    0,
+                    ui_vs::ty::PushConstants {
+                        display_size: img_size,
+                        rotation: [0., 0., r],
+                        scale: 1.,
+                        _dummy0: [0; 8],
+                    },
+                )
+                .draw(
+                    vertex_buffer.len() as u32,
+                    instance_buffer.len() as u32,
+                    0,
+                    0,
+                )
+                .unwrap();
+        }
     }
 }
 
@@ -686,7 +701,6 @@ impl Engine {
             self.world.push_cube(Cube {
                 center: new_cube.cast().unwrap(),
                 color: [1., 0.5, 1.0, 1.],
-                rotation: [0., 0., 0.],
             })
         }
     }
