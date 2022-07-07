@@ -1,6 +1,6 @@
 use std::{f32::consts::PI, sync::Arc, time::Duration};
 
-use cgmath::{Deg, Matrix4, Point2, SquareMatrix, Vector3};
+use cgmath::{Deg, Matrix4, SquareMatrix, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
@@ -397,24 +397,7 @@ impl Engine {
         self.camera
             .move_camera(self.moving_direction * delta.as_secs_f32() * 50.);
 
-        const DELETE_RADIUS: f32 = 10.;
         const LOOK_RADIUS: f32 = 100.;
-
-        self.world.chunks_around_mut_callback(
-            Point2::new(
-                self.camera.position().x as i32,
-                self.camera.position().z as i32,
-            ),
-            DELETE_RADIUS,
-            |chunk| {
-                for cube in chunk
-                    .cubes_around(self.camera.position().cast::<i32>().unwrap(), DELETE_RADIUS)
-                    .collect::<Vec<_>>()
-                {
-                    chunk.remove_cube(cube);
-                }
-            },
-        );
 
         let result = self.world.cube_looking_at(
             self.camera.position(),
