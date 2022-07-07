@@ -1,6 +1,6 @@
 use std::{f32::consts::PI, sync::Arc, time::Duration};
 
-use cgmath::{Deg, Point2, Vector3};
+use cgmath::{Deg, Matrix4, Point2, SquareMatrix, Vector3};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
@@ -29,7 +29,7 @@ use winit::event::{
 
 use crate::{
     camera::Camera,
-    object::{cube::Cube, Instance, InstancesMesh, Mesh, Vertex},
+    object::{cube::Cube, rotation_scale_matrix, Instance, InstancesMesh, Mesh, Vertex},
     world::{CubeLookAt, World},
 };
 
@@ -483,8 +483,7 @@ impl Engine {
             .next(cubes_vs::ty::UniformData {
                 perspective: self.camera.reversed_depth_perspective().into(),
                 view: self.camera.view().into(),
-                rotation: [0., 0., 0.],
-                scale: 1.,
+                rotation_scale: Matrix4::identity().into(),
             })
             .unwrap();
 
@@ -593,10 +592,9 @@ impl Engine {
             let uniform_subbuffer = self
                 .uniform_buffer_pool
                 .next(cubes_vs::ty::UniformData {
-                    rotation: [0., 0., 0.],
                     // scale a bit outward so that it doesn't collide with the block
                     // itself and draw glitched cube (because of depth collision)
-                    scale: 1.012,
+                    rotation_scale: rotation_scale_matrix([0., 0., 0.], 1.012).into(),
                     perspective: self.camera.reversed_depth_perspective().into(),
                     view: self.camera.view().into(),
                 })
@@ -675,8 +673,7 @@ impl Engine {
                     0,
                     ui_vs::ty::PushConstants {
                         display_size: img_size,
-                        rotation: [0., 0., r],
-                        scale: 1.,
+                        rotation_scale: rotation_scale_matrix([0., 0., r], 1.).into(),
                         _dummy0: [0; 8],
                     },
                 )

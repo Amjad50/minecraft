@@ -1,6 +1,7 @@
 use std::{fmt, marker::PhantomData};
 
 use bytemuck::{Pod, Zeroable};
+use cgmath::{Matrix4, Rad};
 use vulkano::impl_vertex;
 
 pub mod cube;
@@ -24,6 +25,14 @@ pub struct Instance {
 }
 
 impl_vertex!(Instance, color, translation);
+
+pub fn rotation_scale_matrix(rotation: [f32; 3], scale: f32) -> Matrix4<f32> {
+    Matrix4::from(cgmath::Euler::new(
+        Rad(rotation[0]),
+        Rad(rotation[1]),
+        Rad(rotation[2]),
+    )) * Matrix4::from_scale(scale)
+}
 
 #[derive(Debug)]
 pub enum InstancesMeshError {
