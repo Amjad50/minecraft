@@ -5,7 +5,6 @@ use super::{Instance, Mesh, Vertex};
 pub struct Square {
     pub center: Point3<f32>,
     pub color: [f32; 4],
-    pub rotation: [f32; 3],
 }
 
 impl Mesh for Square {
@@ -45,8 +44,6 @@ impl Mesh for Square {
         Instance {
             translation: self.center.into(),
             color: self.color,
-            rotation: self.rotation,
-            ..Default::default()
         }
     }
 }

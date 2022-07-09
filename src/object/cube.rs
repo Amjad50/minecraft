@@ -5,7 +5,6 @@ use super::{Instance, Mesh, Vertex};
 pub struct Cube {
     pub center: Point3<f32>,
     pub color: [f32; 4],
-    pub rotation: [f32; 3],
 }
 
 impl Mesh for Cube {
@@ -119,8 +118,6 @@ impl Mesh for Cube {
         Instance {
             translation: self.center.into(),
             color: self.color,
-            rotation: self.rotation,
-            ..Default::default()
         }
     }
 }

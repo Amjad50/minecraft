@@ -26,10 +26,17 @@ const fn chunk_id(pos: Point3<i32>) -> (i32, i32) {
     (pos.x.div_euclid(16) * 16, pos.z.div_euclid(16) * 16)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ChunkCube {
     color: [f32; 4],
-    rotation: [f32; 3],
+    /// Sides present:
+    /// 0: TOP      y + 1
+    /// 1: BOTTOM   y - 1
+    /// 2: EAST     x + 1
+    /// 3: WEST     x - 1
+    /// 4: NORTH    z + 1
+    /// 5: SOUTH    z - 1
+    sides_present: [bool; 6],
 }
 
 pub(crate) struct Chunk {
@@ -74,6 +81,69 @@ impl Chunk {
         }
     }
 
+    /// update the chunk_pos cube and the surrounding cubes
+    /// based on which cubes are present
+    ///
+    /// This is called when creating/removing cubes
+    fn update_surroundings(&mut self, chunk_pos: Point3<i32>) {
+        let index = chunk_pos_to_index(chunk_pos);
+        assert!(index < 16 * 256 * 16);
+
+        let cube_present = self.cubes[index].is_some();
+
+        let around_cubes = [
+            chunk_pos + Vector3::new(0, 1, 0), // TOP
+            chunk_pos - Vector3::new(0, 1, 0), // BOTTOM
+            chunk_pos + Vector3::new(1, 0, 0), // EAST
+            chunk_pos - Vector3::new(1, 0, 0), // WEST
+            chunk_pos + Vector3::new(0, 0, 1), // NORTH
+            chunk_pos - Vector3::new(0, 0, 1), // SOUTH
+        ];
+
+        let mut present_result = [false; 6];
+        for (i, &cube_pos) in around_cubes.iter().enumerate() {
+            // if in range
+            if cube_pos.x >= 0
+                && cube_pos.x < 16
+                && cube_pos.y >= 0
+                && cube_pos.x < 256
+                && cube_pos.z >= 0
+                && cube_pos.z < 16
+            {
+                if let Some(other_cube) = &mut self.cubes[chunk_pos_to_index(cube_pos)] {
+                    // this side is present
+                    present_result[i] = true;
+
+                    // Since the sides are in the form of
+                    // 0: top
+                    // 1: bottom
+                    // 2: east
+                    // 3: west
+                    // etc.
+                    //
+                    // we can flip between 0,1 and 2,3 by XOR.
+                    // 0 ^ 1 = 1, 1 ^ 1 = 0
+                    // 2 ^ 1 = 3, 3 ^ 1 = 2
+                    // etc.
+                    //
+                    // We flip it in the other_cube to set its flags based
+                    // on the updated state, creating/removing this current_cube.
+                    other_cube.sides_present[i ^ 1] = cube_present;
+                } else {
+                    present_result[i] = false;
+                }
+            } else {
+                // TODO: for now we don't have interaction with other chunks
+                // so we assume always that there is no cube
+                present_result[i] = false;
+            }
+        }
+
+        if let Some(current_cube) = &mut self.cubes[index] {
+            current_cube.sides_present = present_result;
+        }
+    }
+
     #[allow(dead_code)]
     pub fn start(&self) -> &Point2<i32> {
         &self.start
@@ -88,8 +158,9 @@ impl Chunk {
 
         self.cubes[index] = Some(ChunkCube {
             color: cube.color,
-            rotation: cube.rotation,
+            sides_present: [false; 6],
         });
+        self.update_surroundings(chunk_position);
 
         self.dirty = true;
         self.world_dirty_ref.set(true);
@@ -100,13 +171,15 @@ impl Chunk {
         let chunk_position = self.in_chunk_pos(pos).unwrap();
 
         let index = chunk_pos_to_index(chunk_position);
-
         self.cubes[index] = None;
+
+        self.update_surroundings(chunk_position);
+
         self.dirty = true;
         self.world_dirty_ref.set(true);
     }
 
-    fn add_to_mesh(&mut self, mesh: &mut InstancesMesh<Cube>) {
+    pub fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty {
             self.mesh = InstancesMesh::new().unwrap();
             self.dirty = false;
@@ -114,35 +187,19 @@ impl Chunk {
             for (i, cube) in self.cubes.iter().enumerate() {
                 if let Some(cube) = cube {
                     let chunk_pos = index_to_chunk_pos(i);
-
-                    let is_edge = chunk_pos.x == 0
-                        || chunk_pos.x == 15
-                        || chunk_pos.y == 0
-                        || chunk_pos.y == 255
-                        || chunk_pos.z == 0
-                        || chunk_pos.z == 15;
-
-                    // if cubes on all sides are present, don't draw this one
-                    if is_edge
-                        || self.cubes[i - 1].is_none()
-                        || self.cubes[i + 1].is_none()
-                        || self.cubes[i - Y_STRIDE as usize].is_none()
-                        || self.cubes[i + Y_STRIDE as usize].is_none()
-                        || self.cubes[i - Z_STRIDE as usize].is_none()
-                        || self.cubes[i + Z_STRIDE as usize].is_none()
-                    {
+                    // if all cubes around it are present, don't draw it
+                    if cube.sides_present != [true; 6] {
                         let pos = chunk_pos + Vector3::new(self.start.x, 0, self.start.y);
                         self.mesh.append_instance(&Cube {
                             center: pos.cast().unwrap(),
                             color: cube.color,
-                            rotation: cube.rotation,
                         });
                     }
                 }
             }
         }
 
-        mesh.extend_mesh(&self.mesh);
+        &self.mesh
     }
 
     #[allow(dead_code)]
@@ -490,7 +547,6 @@ impl World {
                     chunk.push_cube(Cube {
                         center: Point3::new(x, y as i32, z).cast().unwrap(),
                         color,
-                        rotation: [0.0, 0.0, 0.0],
                     });
                 }
             }
@@ -530,6 +586,15 @@ impl World {
         chunks.into_iter()
     }
 
+    #[allow(dead_code)]
+    pub fn all_chunks(&self) -> impl Iterator<Item = &Chunk> {
+        self.chunks.values()
+    }
+
+    pub fn all_chunks_mut(&mut self) -> impl Iterator<Item = &mut Chunk> {
+        self.chunks.values_mut()
+    }
+
     /// Since we can't create a mut iterator easily because of lifetimes errors,
     /// we used callback function to mutate chunks if needed.
     #[allow(dead_code)]
@@ -537,7 +602,7 @@ impl World {
         &mut self,
         pos: Point2<i32>,
         radius: f32,
-        f: impl Fn(&mut Chunk),
+        mut f: impl FnMut(&mut Chunk),
     ) {
         let chunk_containing_pos = chunk_id(Point3::new(pos.x, 0, pos.y));
         let radius_chunks = (radius / 16.).ceil() as i32;
@@ -568,12 +633,13 @@ impl World {
 }
 
 impl World {
-    pub(crate) fn mesh(&mut self) -> &InstancesMesh<Cube> {
+    #[allow(dead_code)]
+    pub fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty.get() {
             self.mesh = InstancesMesh::new().unwrap();
 
             for chunk in self.chunks.values_mut() {
-                chunk.add_to_mesh(&mut self.mesh);
+                self.mesh.extend_mesh(chunk.mesh());
             }
             self.dirty.set(false);
         }
