@@ -2,7 +2,7 @@ use std::{f32::consts::PI, sync::Arc, time::Duration};
 
 use cgmath::{Deg, Matrix4, SquareMatrix, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
+    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, SubpassContents,
     },
@@ -625,25 +625,13 @@ impl Engine {
             },
         ];
 
-        let vertex_buffer = CpuAccessibleBuffer::from_iter(
-            self.queue.device().clone(),
-            BufferUsage::vertex_buffer(),
-            false,
-            vertices.iter().cloned(),
-        )
-        .unwrap();
+        let vertex_buffer = self.vertex_buffer_pool.chunk(vertices).unwrap();
 
         let instances = [Instance {
             color: [1., 1., 1., 1.],
             translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
         }];
-        let instance_buffer = CpuAccessibleBuffer::from_iter(
-            self.queue.device().clone(),
-            BufferUsage::vertex_buffer(),
-            false,
-            instances.iter().cloned(),
-        )
-        .unwrap();
+        let instance_buffer = self.instance_buffer_pool.chunk(instances).unwrap();
 
         builder.bind_pipeline_graphics(self.ui_graphics_pipeline.clone());
 
