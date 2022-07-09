@@ -232,7 +232,7 @@ impl Engine {
         )
         .unwrap();
 
-        let mut world = World::default();
+        let mut world = World::new(&queue);
 
         // create many chunks
         let x_size = 3;
@@ -446,6 +446,16 @@ impl Engine {
         )
         .unwrap();
 
+        for chunk in self.world.all_chunks_mut() {
+            let mesh = chunk.mesh();
+            mesh.vertex_buffer().update_buffers(&mut builder);
+            mesh.vertex_buffer().move_to_next();
+            mesh.index_buffer().update_buffers(&mut builder);
+            mesh.index_buffer().move_to_next();
+            mesh.instance_buffer().update_buffers(&mut builder);
+            mesh.instance_buffer().move_to_next();
+        }
+
         builder
             .begin_render_pass(
                 framebuffer,
@@ -492,22 +502,10 @@ impl Engine {
             )
             .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone());
 
-        // create them once
-        let empty_cube_mesh = InstancesMesh::<Cube>::new().unwrap();
-        let index_buffer = self
-            .index_buffer_pool
-            .chunk(empty_cube_mesh.indices().iter().cloned())
-            .unwrap();
-        let vertex_buffer = self
-            .vertex_buffer_pool
-            .chunk(empty_cube_mesh.vertices().iter().cloned())
-            .unwrap();
-
         let mut render_mesh = |mesh: &InstancesMesh<Cube>| {
-            let instance_buffer = self
-                .instance_buffer_pool
-                .chunk(mesh.instances().iter().cloned())
-                .unwrap();
+            let vertex_buffer = mesh.vertex_buffer().current_buffer();
+            let index_buffer = mesh.index_buffer().current_buffer();
+            let instance_buffer = mesh.instance_buffer().current_buffer();
 
             builder
                 .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))

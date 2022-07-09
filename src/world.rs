@@ -1,6 +1,7 @@
-use std::{cell::Cell, collections::HashMap, rc::Rc};
+use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc};
 
 use cgmath::{InnerSpace, Point2, Point3, Vector3};
+use vulkano::device::Queue;
 
 use crate::object::{cube::Cube, InstancesMesh};
 
@@ -49,13 +50,13 @@ pub(crate) struct Chunk {
 }
 
 impl Chunk {
-    fn new(start: Point2<i32>, world_dirty_ref: Rc<Cell<bool>>) -> Self {
+    fn new(start: Point2<i32>, world_dirty_ref: Rc<Cell<bool>>, queue: &Arc<Queue>) -> Self {
         world_dirty_ref.set(true);
         Self {
             cubes: Box::new([None; 16 * 256 * 16]),
             start,
 
-            mesh: InstancesMesh::new().unwrap(),
+            mesh: InstancesMesh::new(queue).unwrap(),
             dirty: true,
             world_dirty_ref,
         }
@@ -181,7 +182,7 @@ impl Chunk {
 
     pub fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty {
-            self.mesh = InstancesMesh::new().unwrap();
+            self.mesh.clear_instances();
             self.dirty = false;
 
             for (i, cube) in self.cubes.iter().enumerate() {
@@ -197,6 +198,7 @@ impl Chunk {
                     }
                 }
             }
+            self.mesh.rebuild_instance_buffer();
         }
 
         &self.mesh
@@ -499,14 +501,17 @@ pub(crate) struct World {
 
     mesh: InstancesMesh<Cube>,
     dirty: Rc<Cell<bool>>,
+
+    queue: Arc<Queue>,
 }
 
-impl Default for World {
-    fn default() -> Self {
+impl World {
+    pub fn new(queue: &Arc<Queue>) -> Self {
         Self {
             chunks: HashMap::new(),
-            mesh: InstancesMesh::new().unwrap(),
+            mesh: InstancesMesh::new(queue).unwrap(),
             dirty: Rc::new(Cell::new(false)),
+            queue: queue.clone(),
         }
     }
 }
@@ -517,7 +522,7 @@ impl World {
         let chunk_id = chunk_id(block.center.cast().unwrap());
         self.chunks
             .entry(chunk_id)
-            .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone()))
+            .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone(), &self.queue))
             .push_cube(block);
     }
 
@@ -528,7 +533,7 @@ impl World {
         let chunk = self
             .chunks
             .entry(chunk_id)
-            .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone()));
+            .or_insert_with(|| Chunk::new(chunk_id.into(), self.dirty.clone(), &self.queue));
 
         chunk.remove_cube(pos);
     }
@@ -539,7 +544,7 @@ impl World {
         let start_y = y;
         let start_z = chunk_id.1;
 
-        let mut chunk = Chunk::new(chunk_id.into(), self.dirty.clone());
+        let mut chunk = Chunk::new(chunk_id.into(), self.dirty.clone(), &self.queue);
 
         for x in start_x..(start_x + 16) {
             for y in 0..start_y {
@@ -636,11 +641,12 @@ impl World {
     #[allow(dead_code)]
     pub fn mesh(&mut self) -> &InstancesMesh<Cube> {
         if self.dirty.get() {
-            self.mesh = InstancesMesh::new().unwrap();
+            self.mesh.clear_instances();
 
             for chunk in self.chunks.values_mut() {
                 self.mesh.extend_mesh(chunk.mesh());
             }
+            self.mesh.rebuild_instance_buffer();
             self.dirty.set(false);
         }
 

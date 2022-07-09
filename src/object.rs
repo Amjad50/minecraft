@@ -1,8 +1,10 @@
-use std::{fmt, marker::PhantomData};
+use std::{fmt, marker::PhantomData, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
 use cgmath::{Matrix4, Rad};
-use vulkano::impl_vertex;
+use vulkano::{buffer::BufferUsage, device::Queue, impl_vertex};
+
+use crate::buffers::MirroredBuffer;
 
 pub mod cube;
 #[allow(dead_code)]
@@ -57,15 +59,17 @@ pub trait Mesh {
 }
 
 pub struct InstancesMesh<M: Mesh> {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
     instances: Vec<Instance>,
+
+    vertex_buffer: MirroredBuffer<Vertex>,
+    index_buffer: MirroredBuffer<u32>,
+    instance_buffer: MirroredBuffer<Instance>,
 
     phantom: PhantomData<M>,
 }
 
 impl<M: Mesh> InstancesMesh<M> {
-    pub fn new() -> Result<Self, InstancesMeshError> {
+    pub fn new(queue: &Arc<Queue>) -> Result<Self, InstancesMeshError> {
         let mesh = M::mesh();
 
         if mesh.0.is_empty() {
@@ -74,38 +78,70 @@ impl<M: Mesh> InstancesMesh<M> {
         if mesh.1.is_empty() {
             return Err(InstancesMeshError::EmptyIndices);
         }
+        let vertices = mesh.0;
+        let indices = mesh.1;
+
+        let vertex_buffer = MirroredBuffer::from_iter(
+            queue,
+            2,
+            BufferUsage::vertex_buffer(),
+            vertices.iter().cloned(),
+        );
+
+        let index_buffer = MirroredBuffer::from_iter(
+            queue,
+            2,
+            BufferUsage::index_buffer(),
+            indices.iter().cloned(),
+        );
+
+        let instance_buffer = MirroredBuffer::from_iter(queue, 2, BufferUsage::vertex_buffer(), []);
 
         Ok(Self {
-            vertices: mesh.0,
-            indices: mesh.1,
             instances: Vec::new(),
+            vertex_buffer,
+            index_buffer,
+            instance_buffer,
             phantom: PhantomData,
         })
     }
 
-    pub fn vertices(&self) -> &[Vertex] {
-        &self.vertices
-    }
-
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-
+    #[allow(dead_code)]
     pub fn instances(&self) -> &[Instance] {
         &self.instances
     }
 
+    pub fn clear_instances(&mut self) {
+        self.instances.clear();
+    }
+
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.indices.is_empty() || self.instances.is_empty()
+        self.instances.is_empty()
     }
 
     pub fn append_instance(&mut self, instance: &M) {
         self.instances.push(instance.to_instance());
     }
 
-    #[allow(dead_code)]
+    pub fn rebuild_instance_buffer(&mut self) {
+        self.instance_buffer
+            .update_data(self.instances.iter().cloned());
+    }
+
     pub fn extend_mesh(&mut self, mesh: &Self) {
         self.instances.extend_from_slice(&mesh.instances);
+    }
+
+    pub fn vertex_buffer(&self) -> &MirroredBuffer<Vertex> {
+        &self.vertex_buffer
+    }
+
+    pub fn index_buffer(&self) -> &MirroredBuffer<u32> {
+        &self.index_buffer
+    }
+
+    pub fn instance_buffer(&self) -> &MirroredBuffer<Instance> {
+        &self.instance_buffer
     }
 }
