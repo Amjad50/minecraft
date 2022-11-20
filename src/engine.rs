@@ -235,8 +235,8 @@ impl Engine {
         let mut world = World::default();
 
         // create many chunks
-        let x_size = 3;
-        let y_size = 3;
+        let x_size = 5;
+        let y_size = 5;
         for x in 0..x_size {
             for y in 0..y_size {
                 world.create_chunk(
@@ -393,6 +393,7 @@ impl Engine {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn update(&mut self, delta: Duration) {
         self.camera
             .move_camera(self.moving_direction * delta.as_secs_f32() * 50.);
@@ -407,6 +408,7 @@ impl Engine {
         self.looking_at_cube = result.result_cube;
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
     where
         Fin: GpuFuture + 'static,
@@ -523,6 +525,8 @@ impl Engine {
         };
 
         for chunk in self.world.all_chunks_mut() {
+            let span = tracing::info_span!("render mesh {}", "{:?}", chunk.start());
+            let _enter = span.enter();
             let mesh = chunk.mesh();
             render_mesh(mesh);
         }
@@ -540,6 +544,7 @@ impl Engine {
             .boxed()
     }
 
+    #[tracing::instrument(skip_all)]
     fn render_looking_at(
         &mut self,
 
@@ -608,6 +613,7 @@ impl Engine {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     fn render_ui(
         &mut self,
         img_size: [u32; 2],
