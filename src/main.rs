@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use display::Display;
 use engine::Engine;
+use tracing_subscriber::prelude::*;
 use vulkano::image::ImageUsage;
 use winit::{
     event::{Event, WindowEvent},
@@ -15,6 +16,11 @@ use winit::{
 };
 
 fn main() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::registry().with(tracing_tracy::TracyLayer::new()),
+    )
+    .expect("set up the subscriber");
+
     let event_loop = EventLoop::new();
     let mut display = Display::new(
         &event_loop,

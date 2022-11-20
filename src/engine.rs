@@ -1,8 +1,8 @@
 use std::{f32::consts::PI, sync::Arc, time::Duration};
 
-use cgmath::{Deg, Point2, Vector3};
+use cgmath::{Deg, Matrix4, SquareMatrix, Vector3};
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, CpuBufferPool, TypedBufferAccess},
+    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
     command_buffer::{
         AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, SubpassContents,
     },
@@ -29,7 +29,7 @@ use winit::event::{
 
 use crate::{
     camera::Camera,
-    object::{cube::Cube, Instance, Mesh, Vertex},
+    object::{cube::Cube, rotation_scale_matrix, Instance, InstancesMesh, Mesh, Vertex},
     world::{CubeLookAt, World},
 };
 
@@ -235,8 +235,8 @@ impl Engine {
         let mut world = World::default();
 
         // create many chunks
-        let x_size = 3;
-        let y_size = 3;
+        let x_size = 5;
+        let y_size = 5;
         for x in 0..x_size {
             for y in 0..y_size {
                 world.create_chunk(
@@ -393,28 +393,12 @@ impl Engine {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn update(&mut self, delta: Duration) {
         self.camera
             .move_camera(self.moving_direction * delta.as_secs_f32() * 50.);
 
-        const DELETE_RADIUS: f32 = 10.;
         const LOOK_RADIUS: f32 = 100.;
-
-        self.world.chunks_around_mut_callback(
-            Point2::new(
-                self.camera.position().x as i32,
-                self.camera.position().z as i32,
-            ),
-            DELETE_RADIUS,
-            |chunk| {
-                for cube in chunk
-                    .cubes_around(self.camera.position().cast::<i32>().unwrap(), DELETE_RADIUS)
-                    .collect::<Vec<_>>()
-                {
-                    chunk.remove_cube(cube);
-                }
-            },
-        );
 
         let result = self.world.cube_looking_at(
             self.camera.position(),
@@ -424,6 +408,7 @@ impl Engine {
         self.looking_at_cube = result.result_cube;
     }
 
+    #[tracing::instrument(skip_all)]
     pub fn render<Fin>(&mut self, image: Arc<dyn ImageAccess>, future: Fin) -> Box<dyn GpuFuture>
     where
         Fin: GpuFuture + 'static,
@@ -475,59 +460,60 @@ impl Engine {
             )
             .unwrap();
 
-        let mesh = self.world.mesh();
+        self.camera
+            .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
 
-        if !mesh.is_empty() {
-            let index_buffer = self
-                .index_buffer_pool
-                .chunk(mesh.indices().iter().cloned())
-                .unwrap();
+        let uniform_subbuffer = self
+            .uniform_buffer_pool
+            .next(cubes_vs::ty::UniformData {
+                perspective: self.camera.reversed_depth_perspective().into(),
+                view: self.camera.view().into(),
+                rotation_scale: Matrix4::identity().into(),
+            })
+            .unwrap();
 
-            let vertex_buffer = self
-                .vertex_buffer_pool
-                .chunk(mesh.vertices().iter().cloned())
-                .unwrap();
+        let descriptor_set = self
+            .descriptor_set_pool
+            .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
+            .unwrap();
 
+        builder
+            .set_viewport(
+                0,
+                [Viewport {
+                    origin: [0.0, 0.0],
+                    dimensions: self.viewport_size,
+                    depth_range: 0.0..1.0,
+                }],
+            )
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.cubes_graphics_pipeline.layout().clone(),
+                0,
+                descriptor_set,
+            )
+            .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone());
+
+        // create them once
+        let empty_cube_mesh = InstancesMesh::<Cube>::new().unwrap();
+        let index_buffer = self
+            .index_buffer_pool
+            .chunk(empty_cube_mesh.indices().iter().cloned())
+            .unwrap();
+        let vertex_buffer = self
+            .vertex_buffer_pool
+            .chunk(empty_cube_mesh.vertices().iter().cloned())
+            .unwrap();
+
+        let mut render_mesh = |mesh: &InstancesMesh<Cube>| {
             let instance_buffer = self
                 .instance_buffer_pool
                 .chunk(mesh.instances().iter().cloned())
                 .unwrap();
 
-            self.camera
-                .set_aspect(self.viewport_size[0] / self.viewport_size[1]);
-
-            let uniform_subbuffer = self
-                .uniform_buffer_pool
-                .next(cubes_vs::ty::UniformData {
-                    perspective: self.camera.reversed_depth_perspective().into(),
-                    view: self.camera.view().into(),
-                })
-                .unwrap();
-            let descriptor_set = self
-                .descriptor_set_pool
-                .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
-                .unwrap();
-
             builder
-                .set_viewport(
-                    0,
-                    [Viewport {
-                        origin: [0.0, 0.0],
-                        dimensions: self.viewport_size,
-                        depth_range: 0.0..1.0,
-                    }],
-                )
-                .bind_descriptor_sets(
-                    PipelineBindPoint::Graphics,
-                    self.cubes_graphics_pipeline.layout().clone(),
-                    0,
-                    descriptor_set,
-                );
-
-            builder
+                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
                 .bind_index_buffer(index_buffer.clone())
-                .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
-                .bind_pipeline_graphics(self.cubes_graphics_pipeline.clone())
                 .draw_indexed(
                     index_buffer.len() as u32,
                     instance_buffer.len() as u32,
@@ -536,6 +522,13 @@ impl Engine {
                     0,
                 )
                 .unwrap();
+        };
+
+        for chunk in self.world.all_chunks_mut() {
+            let span = tracing::info_span!("render mesh {}", "{:?}", chunk.start());
+            let _enter = span.enter();
+            let mesh = chunk.mesh();
+            render_mesh(mesh);
         }
 
         self.render_looking_at(&mut builder);
@@ -551,6 +544,7 @@ impl Engine {
             .boxed()
     }
 
+    #[tracing::instrument(skip_all)]
     fn render_looking_at(
         &mut self,
 
@@ -578,16 +572,33 @@ impl Engine {
             let instances = [Instance {
                 color: [1., 1., 1., 1.],
                 translation: cube.cast::<f32>().unwrap().into(),
-                // scale a bit outward so that it doesn't collide with the block
-                // itself and draw glitched cube (because of depth collision)
-                scale: 1.012,
-                ..Default::default()
             }];
             let vertex_buffer = self.vertex_buffer_pool.chunk(cube_vertices).unwrap();
             let instance_buffer = self.instance_buffer_pool.chunk(instances).unwrap();
             let index_buffer = self.index_buffer_pool.chunk(indices).unwrap();
 
+            let uniform_subbuffer = self
+                .uniform_buffer_pool
+                .next(cubes_vs::ty::UniformData {
+                    // scale a bit outward so that it doesn't collide with the block
+                    // itself and draw glitched cube (because of depth collision)
+                    rotation_scale: rotation_scale_matrix([0., 0., 0.], 1.012).into(),
+                    perspective: self.camera.reversed_depth_perspective().into(),
+                    view: self.camera.view().into(),
+                })
+                .unwrap();
+            let descriptor_set = self
+                .descriptor_set_pool
+                .next([WriteDescriptorSet::buffer(0, uniform_subbuffer)])
+                .unwrap();
+
             builder
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    self.cubes_line_graphics_pipeline.layout().clone(),
+                    0,
+                    descriptor_set,
+                )
                 .bind_vertex_buffers(0, (vertex_buffer, instance_buffer.clone()))
                 .bind_pipeline_graphics(self.cubes_line_graphics_pipeline.clone())
                 .bind_index_buffer(index_buffer.clone())
@@ -602,12 +613,13 @@ impl Engine {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     fn render_ui(
         &mut self,
         img_size: [u32; 2],
         builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) {
-        // create a cross of 20 pixels in size
+        // create a line for the cross cross of 20 pixels in size
         let vertices = [
             Vertex {
                 pos: [0., 10., 0.],
@@ -619,55 +631,37 @@ impl Engine {
             },
         ];
 
-        let vertex_buffer = CpuAccessibleBuffer::from_iter(
-            self.queue.device().clone(),
-            BufferUsage::vertex_buffer(),
-            false,
-            vertices.iter().cloned(),
-        )
-        .unwrap();
+        let vertex_buffer = self.vertex_buffer_pool.chunk(vertices).unwrap();
 
-        let instances = [
-            // vertical
-            Instance {
-                color: [1., 1., 1., 1.],
-                translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
-                ..Default::default()
-            },
-            // horizontal (rotated)
-            Instance {
-                color: [1., 1., 1., 1.],
-                rotation: [0., 0., PI / 2.],
-                translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
-                ..Default::default()
-            },
-        ];
+        let instances = [Instance {
+            color: [1., 1., 1., 1.],
+            translation: [img_size[0] as f32 / 2., img_size[1] as f32 / 2., 0.],
+        }];
+        let instance_buffer = self.instance_buffer_pool.chunk(instances).unwrap();
 
-        let instance_buffer = CpuAccessibleBuffer::from_iter(
-            self.queue.device().clone(),
-            BufferUsage::vertex_buffer(),
-            false,
-            instances.iter().cloned(),
-        )
-        .unwrap();
+        builder.bind_pipeline_graphics(self.ui_graphics_pipeline.clone());
 
-        builder
-            .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
-            .bind_pipeline_graphics(self.ui_graphics_pipeline.clone())
-            .push_constants(
-                self.ui_graphics_pipeline.layout().clone(),
-                0,
-                ui_vs::ty::PushConstants {
-                    display_size: img_size,
-                },
-            )
-            .draw(
-                vertex_buffer.len() as u32,
-                instance_buffer.len() as u32,
-                0,
-                0,
-            )
-            .unwrap();
+        // draw the line two times
+        for r in [0., PI / 2.] {
+            builder
+                .bind_vertex_buffers(0, (vertex_buffer.clone(), instance_buffer.clone()))
+                .push_constants(
+                    self.ui_graphics_pipeline.layout().clone(),
+                    0,
+                    ui_vs::ty::PushConstants {
+                        display_size: img_size,
+                        rotation_scale: rotation_scale_matrix([0., 0., r], 1.).into(),
+                        _dummy0: [0; 8],
+                    },
+                )
+                .draw(
+                    vertex_buffer.len() as u32,
+                    instance_buffer.len() as u32,
+                    0,
+                    0,
+                )
+                .unwrap();
+        }
     }
 }
 
@@ -681,7 +675,6 @@ impl Engine {
             self.world.push_cube(Cube {
                 center: new_cube.cast().unwrap(),
                 color: [1., 0.5, 1.0, 1.],
-                rotation: [0., 0., 0.],
             })
         }
     }
